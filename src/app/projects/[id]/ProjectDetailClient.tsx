@@ -215,6 +215,28 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
 
   // ── Datos de ángulos guardados (parsing defensivo) ──
   let savedAngulos: AngulosData | null = null;
+
+  // Helper: normalizar tier a S/A/B/C
+  function normalizeTier(raw: unknown): string {
+    const s = String(raw ?? '').toLowerCase();
+    if (s === 's' || s.includes('tier1') || s.includes('tier_1') || s.includes('nacional')) return 'S';
+    if (s === 'a' || s.includes('tier2') || s.includes('tier_2') || s.includes('especializado')) return 'A';
+    if (s === 'b' || s.includes('tier3') || s.includes('tier_3') || s.includes('regional')) return 'B';
+    if (s === 'c' || s.includes('medios_propios') || s.includes('interno')) return 'C';
+    return s.toUpperCase().slice(0, 2) || 'C';
+  }
+
+  // Helper: extraer texto legible de un campo que puede ser string u object
+  function safeText(val: unknown): string {
+    if (typeof val === 'string') return val;
+    if (val && typeof val === 'object') {
+      const obj = val as Record<string, unknown>;
+      // Intentar extraer campos comunes: nivel, descripcion, label, text, value
+      return String(obj.nivel ?? obj.descripcion ?? obj.label ?? obj.text ?? obj.value ?? JSON.stringify(val));
+    }
+    return String(val ?? '');
+  }
+
   try {
     const raw = project.data?.angulos as Record<string, unknown> | undefined;
     if (raw && typeof raw === 'object') {
@@ -224,12 +246,12 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
       savedAngulos = {
         angulos: angulosList.map((a: Record<string, unknown>, idx: number) => ({
           numero: Number(a.numero ?? a.number ?? idx + 1),
-          tier: String(a.tier ?? 'C'),
+          tier: normalizeTier(a.tier),
           titulo: String(a.titulo ?? a.title ?? a.angulo ?? 'Sin título'),
           gancho: String(a.gancho ?? a.hook ?? ''),
-          audiencia: String(a.audiencia ?? a.audience ?? ''),
-          tono: String(a.tono ?? a.tone ?? ''),
-          riesgo: String(a.riesgo ?? a.risk ?? ''),
+          audiencia: safeText(a.audiencia ?? a.audience),
+          tono: safeText(a.tono ?? a.tone),
+          riesgo: safeText(a.riesgo ?? a.risk),
           fuentes: Array.isArray(a.fuentes) ? a.fuentes.map(String)
             : Array.isArray(a.sources) ? a.sources.map(String)
             : typeof a.fuentes === 'string' ? [a.fuentes]
