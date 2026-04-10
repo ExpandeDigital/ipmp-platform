@@ -114,3 +114,61 @@ Environment is Windows + bash (Git Bash / WSL-style). Use Unix paths and forward
 - `RUNBOOK.md` — step-by-step operational manual (Railway, Vercel, init endpoint)
 - `doc/IP_MP_ESTADO_MAESTRO.md` — master state document: pipeline phases, 12-document packaging spec, blindaje rules, tool roadmap
 - `doc/HANDOFF_SESION_2026-04-10.md` — last session handoff with chunk-by-chunk status
+
+## Hallazgos de validación — Chunk 6 (10 abril 2026)
+
+End-to-end validation in production using a real case (`DREAMOMS-ASL-2026-0001`, a legislative brief on declining birth rates in Chile). The pipeline works as designed, but surfaced six architectural findings worth preserving for future chunks. None of these are bugs in Chunk 6 — they are scope revelations and known gaps.
+
+### a) Brand–hypothesis dissonance after traspaso
+
+When a project is born in IP mode (no tenant) and generates hypotheses via `buildAngulosPrompt()` (no brand context), and the operator later does the traspaso to MP by assigning tenant + template, the original hypotheses are **not** reinterpreted under the brand lens. Observed consequence: the Constructor de Pitch prefills from a brand-neutral hypothesis but then runs under the MP prompt with brand context, producing pitches that the Validador de Tono later flags as "misaligned with the brand voice" (seen concretely with Dreamoms + a purely economic framing targeted at Diario Financiero). Not a Chunk 6 bug — an architectural revelation to resolve in a later chunk. See Chunk 8 design note in the Roadmap below.
+
+### b) Residual `dato_referencial` category in the prompt
+
+The new `buildAngulosPrompt()` still lets the model self-categorize hypotheses as `"dato_referencial"` (observed in hypothesis 4 of the natalidad case). That value is a leftover from the pre-Chunk 6 framework and acts as a Trojan horse for fabrication: it implies the model has backing data when in fact it cannot verify anything. The next prompt refinement should drop the category entirely and force all hypotheses into `"requiere_pesquisa"`. Tracked for Chunk 9.
+
+### c) No feedback loop from Validador to Generador
+
+The Validador de Borrador produces actionable findings (bias, precision, brand alignment, ethics), but those findings are not injected into the context of the next generator run on the same project. Opportunity for Chunk 8: the Generador de Borrador should receive `data.validaciones_borrador[]` as part of its input context so it can iterate on the previous verdict instead of starting from scratch.
+
+### d) Verificaciones críticas are visual-only
+
+The checkboxes rendered inside each hypothesis card for `verificaciones_criticas` are decorative — there is no persisted check state, no lifecycle, no link to sources. Chunk 7 (ODF) must upgrade them to a real system: states (`pendiente` / `en_curso` / `confirmada` / `descartada`), association to sources from the ODF, and a visible counter on the pipeline bar.
+
+### e) Missing soft gates on pipeline transitions
+
+The only hard gate today is `TRASPASO_REQUIRED` between `pesquisa` → `produccion`. Other transitions silently accept anything. Opportunity: add non-blocking warnings. Examples: advancing `validacion` → `pesquisa` without a `hipotesis_elegida` should prompt "no elegiste ninguna hipótesis, ¿seguro?"; once Chunk 7 ships, advancing `pesquisa` → `produccion` without any entries in `data.fuentes` should warn similarly. Keep them as confirmable warnings, not hard blocks — the only hard block should remain TRASPASO.
+
+### f) Revision phase currently validates the wrong text
+
+The Validador de Tono in `revision` is designed to audit the borrador produced by the Generador de Borrador in `produccion`. Since Chunk 8 does not exist yet, operators are pasting the pitch (built in `pesquisa`) into the validator as a workaround. This auto-resolves when Chunk 8 lands. Until then, consider adding a visual note inside the Validador de Borrador tab: "in normal operation this tool audits the borrador generated in the produccion phase".
+
+## Roadmap
+
+Confirmed chunk ordering after Chunk 6 validation (10 abril 2026). Each chunk should preserve the Chunk 6 retrocompat contract: projects created under older chunks must keep rendering without writes to any of the new `data.*` keys.
+
+### Chunk 7 — VHP rescue + ODF (next priority)
+
+- **Validador de Hipótesis y Pista (VHP)** — new tool in the `validacion` phase, complementary to the Generador de Hipótesis. Input: `hipotesis_elegida` + a concrete lead from the operator (an available source, a document, a contact). Output: a viability score + recommendations. Persisted in `data.validaciones_hipotesis[]`.
+- **Organizador de Fuentes Forenses (ODF)** — new tool in the `pesquisa` phase. Structured CRUD of sources with fields: `tipo` (`persona` | `documento` | `dato` | `testimonio`), name/title, role/origin, `estado` (`por_contactar` | `contactada` | `verificada` | `descartada`), `confianza` (`baja` | `media` | `alta`), notes, `fecha_registro`. Persisted in `data.fuentes[]`.
+- **Source counter badge** on the pipeline bar over the `pesquisa` cell, same pattern as the `⭐ elegida` badge Chunk 6 added on `validacion`.
+- **Retrocompat**: pre-Chunk 7 projects must render correctly without either array present.
+
+### Chunk 8 — Generador de Borrador (after Chunk 7)
+
+- New tool in the `produccion` phase (currently a placeholder).
+- Input context: `hipotesis_elegida` + `pitch` + `fuentes` (from ODF) + `radar_editorial` audits + `validaciones_borrador` previous iterations + `thesis` + tenant + template.
+- Output: a full draft in the template's format (Policy Brief, Reportaje, Nota, etc.), respecting the tenant's blindaje rules.
+- **Open design question** to resolve when scoping Chunk 8: how to address the brand–hypothesis dissonance (finding "a" above). Options under evaluation:
+  - **(A)** Ignore the old pitch and generate straight from `hipotesis_elegida` + tenant context.
+  - **(B)** Reinterpret the pitch through the brand lens as a preprocessing step.
+  - **(C)** Force pitch regeneration immediately after the traspaso, before entering `produccion`.
+
+### Chunk 9 — Refinements
+
+- Local `.env.local` setup for development (pending since 10 abril 2026 when localhost validation was skipped in favor of production validation).
+- Cleanup of the legacy `/tools/angulos` route — either drop it from the nav, or refactor to the current IP/MP model.
+- Soft gates on pipeline transitions (finding "e").
+- Remove the `dato_referencial` category from the prompt (finding "b").
+- UX polish driven by real usage feedback.
+- Basic exporter implementation for the `exportado` phase.
