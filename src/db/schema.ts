@@ -10,6 +10,11 @@
  *   revisions          → Log de revisiones de Claudia / revisores
  *   exports            → Audit trail de qué se exportó y cuándo
  *   consumption_logs   → Tracking de consumo de Claude API por tenant
+ *
+ * REFACTORIZACIÓN 5a (Abril 2026):
+ *   - tenantId y templateId ahora son NULLABLE
+ *   - Project nace sin marca (InvestigaPress), se asigna en traspaso a MetricPress
+ *   - classification tiene default 'por_asignar'
  */
 
 import {
@@ -86,8 +91,9 @@ export const templates = pgTable('templates', {
 export const projects = pgTable('projects', {
   id: uuid('id').primaryKey().defaultRandom(),
   publicId: text('public_id').notNull().unique(),
-  tenantId: uuid('tenant_id').notNull().references(() => tenants.id),
-  templateId: uuid('template_id').notNull().references(() => templates.id),
+  // ── REFACTORIZACIÓN 5a: nullable hasta traspaso IP→MP ──
+  tenantId: uuid('tenant_id').references(() => tenants.id),
+  templateId: uuid('template_id').references(() => templates.id),
   brandVariant: text('brand_variant'),
   title: text('title').notNull(),
   status: text('status', {
@@ -105,7 +111,7 @@ export const projects = pgTable('projects', {
     .notNull()
     .default('draft'),
   thesis: text('thesis'),
-  classification: text('classification').notNull(),
+  classification: text('classification').notNull().default('por_asignar'),
   data: jsonb('data').$type<Record<string, unknown>>().default({}),
   createdBy: uuid('created_by').references(() => users.id),
   createdAt: timestamp('created_at').notNull().defaultNow(),

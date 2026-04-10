@@ -2,16 +2,20 @@
  * IP+MP Platform — API de Projects
  *
  * GET  /api/projects         → Lista todos los projects (con filtros opcionales)
- * POST /api/projects         → Crea un nuevo project con publicId automático
+ * POST /api/projects         → Crea un nuevo project
  *
- * Formato publicId: TENANT_SLUG-PREFIX-AÑO-NÚMERO
- * Ejemplo: DREAMOMS-RP-2026-0001
+ * REFACTORIZACIÓN 5a (Abril 2026):
+ *   - POST ya NO requiere tenantSlug ni templateSlug
+ *   - Project nace solo con título + tesis (InvestigaPress)
+ *   - PublicId temporal: IP-AÑO-XXXX (sin tenant prefix)
+ *   - Si se pasan tenant/template, se usan (retrocompatibilidad)
+ *   - GET usa LEFT JOIN (tenant y template pueden ser null)
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
 import { projects, tenants, templates } from '@/db/schema';
-import { eq, desc, and, like, count } from 'drizzle-orm';
+import { eq, desc, like, count, sql } from 'drizzle-orm';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,7 +26,7 @@ export async function GET(request: NextRequest) {
     const tenantSlug = searchParams.get('tenant');
     const status = searchParams.get('status');
 
-    // Query con joins para traer nombres de tenant y template
+    // LEFT JOIN: tenant y template pueden ser null (fase InvestigaPress)
     const allProjects = await db
       .select({
         id: projects.id,
@@ -42,11 +46,11 @@ export async function GET(request: NextRequest) {
         templatePrefix: templates.idPrefix,
       })
       .from(projects)
-      .innerJoin(tenants, eq(projects.tenantId, tenants.id))
-      .innerJoin(templates, eq(projects.templateId, templates.id))
+      .leftJoin(tenants, eq(projects.tenantId, tenants.id))
+      .leftJoin(templates, eq(projects.templateId, templates.id))
       .orderBy(desc(projects.createdAt));
 
-    // Filtrar en JS (más simple que condiciones dinámicas con Drizzle)
+    // Filtrar en JS
     let filtered = allProjects;
     if (tenantSlug) {
       filtered = filtered.filter((p) => p.tenantSlug === tenantSlug);
@@ -67,22 +71,18 @@ export async function GET(request: NextRequest) {
 
 // ── POST: Crear project ──────────────────────────────
 interface CreateProjectBody {
-  tenantSlug: string;
-  templateSlug: string;
   title: string;
   thesis?: string;
+  // Opcionales — si se pasan, se asignan (retrocompatibilidad Chunk 4)
+  tenantSlug?: string;
+  templateSlug?: string;
   brandVariant?: string;
 }
 
 function validateCreateBody(body: unknown): body is CreateProjectBody {
   if (!body || typeof body !== 'object') return false;
   const b = body as Record<string, unknown>;
-  return (
-    typeof b.tenantSlug === 'string' &&
-    typeof b.templateSlug === 'string' &&
-    typeof b.title === 'string' &&
-    b.title.length > 0
-  );
+  return typeof b.title === 'string' && b.title.length > 0;
 }
 
 export async function POST(request: NextRequest) {
@@ -91,65 +91,97 @@ export async function POST(request: NextRequest) {
 
     if (!validateCreateBody(body)) {
       return NextResponse.json(
-        { error: 'Campos requeridos: tenantSlug, templateSlug, title' },
+        { error: 'Campo requerido: title' },
         { status: 400 }
       );
     }
 
-    const { tenantSlug, templateSlug, title, thesis, brandVariant } = body;
+    const { title, thesis, tenantSlug, templateSlug, brandVariant } = body;
 
-    // Buscar tenant
-    const [tenant] = await db
-      .select()
-      .from(tenants)
-      .where(eq(tenants.slug, tenantSlug))
-      .limit(1);
+    let tenantId: string | null = null;
+    let templateId: string | null = null;
+    let tenantSlugResolved: string | null = null;
+    let tenantNameResolved: string | null = null;
+    let templateSlugResolved: string | null = null;
+    let templateNameResolved: string | null = null;
+    let idPrefix: string | null = null;
+    let classification = 'por_asignar';
 
-    if (!tenant) {
-      return NextResponse.json(
-        { error: `Tenant no encontrado: ${tenantSlug}` },
-        { status: 404 }
-      );
+    // ── Si se pasa tenant, resolverlo ──
+    if (tenantSlug) {
+      const [tenant] = await db
+        .select()
+        .from(tenants)
+        .where(eq(tenants.slug, tenantSlug))
+        .limit(1);
+
+      if (!tenant) {
+        return NextResponse.json(
+          { error: `Tenant no encontrado: ${tenantSlug}` },
+          { status: 404 }
+        );
+      }
+      tenantId = tenant.id;
+      tenantSlugResolved = tenant.slug;
+      tenantNameResolved = tenant.name;
     }
 
-    // Buscar template
-    const [template] = await db
-      .select()
-      .from(templates)
-      .where(eq(templates.slug, templateSlug))
-      .limit(1);
+    // ── Si se pasa template, resolverlo ──
+    if (templateSlug) {
+      const [template] = await db
+        .select()
+        .from(templates)
+        .where(eq(templates.slug, templateSlug))
+        .limit(1);
 
-    if (!template) {
-      return NextResponse.json(
-        { error: `Plantilla no encontrada: ${templateSlug}` },
-        { status: 404 }
-      );
+      if (!template) {
+        return NextResponse.json(
+          { error: `Plantilla no encontrada: ${templateSlug}` },
+          { status: 404 }
+        );
+      }
+      templateId = template.id;
+      templateSlugResolved = template.slug;
+      templateNameResolved = template.name;
+      idPrefix = template.idPrefix;
+      classification = template.defaultClassification;
     }
 
-    // Generar publicId: TENANT-PREFIX-AÑO-NÚMERO
+    // ── Generar publicId ──
     const year = new Date().getFullYear();
-    const prefix = `${tenantSlug.toUpperCase()}-${template.idPrefix}-${year}-`;
+    let publicId: string;
 
-    // Contar projects existentes con este prefijo para el número secuencial
-    const [existing] = await db
-      .select({ count: count() })
-      .from(projects)
-      .where(like(projects.publicId, `${prefix}%`));
+    if (tenantSlugResolved && idPrefix) {
+      // Modo MetricPress (retrocompatibilidad): TENANT-PREFIX-AÑO-XXXX
+      const prefix = `${tenantSlugResolved.toUpperCase()}-${idPrefix}-${year}-`;
+      const [existing] = await db
+        .select({ count: count() })
+        .from(projects)
+        .where(like(projects.publicId, `${prefix}%`));
+      const nextNumber = (Number(existing.count) + 1).toString().padStart(4, '0');
+      publicId = `${prefix}${nextNumber}`;
+    } else {
+      // Modo InvestigaPress: IP-AÑO-XXXX
+      const prefix = `IP-${year}-`;
+      const [existing] = await db
+        .select({ count: count() })
+        .from(projects)
+        .where(like(projects.publicId, `${prefix}%`));
+      const nextNumber = (Number(existing.count) + 1).toString().padStart(4, '0');
+      publicId = `${prefix}${nextNumber}`;
+    }
 
-    const nextNumber = (Number(existing.count) + 1).toString().padStart(4, '0');
-    const publicId = `${prefix}${nextNumber}`;
-
-    // Crear project
+    // ── Crear project ──
     const [newProject] = await db
       .insert(projects)
       .values({
         publicId,
-        tenantId: tenant.id,
-        templateId: template.id,
+        tenantId,
+        templateId,
         title,
         thesis: thesis ?? null,
         brandVariant: brandVariant ?? null,
-        classification: template.defaultClassification,
+        classification,
         status: 'draft',
         data: {},
       })
@@ -160,10 +192,10 @@ export async function POST(request: NextRequest) {
       project: {
         ...newProject,
         publicId,
-        tenantSlug: tenant.slug,
-        tenantName: tenant.name,
-        templateSlug: template.slug,
-        templateName: template.name,
+        tenantSlug: tenantSlugResolved,
+        tenantName: tenantNameResolved,
+        templateSlug: templateSlugResolved,
+        templateName: templateNameResolved,
       },
     }, { status: 201 });
   } catch (error) {
