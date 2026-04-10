@@ -48,14 +48,16 @@ export async function POST(request: NextRequest) {
     // --- Step 2: Seed tenants ---
     log.push('🌱 Insertando tenants...');
     for (const tenant of SEED_TENANTS) {
-      await db.insert(tenants).values(tenant).onConflictDoNothing({ target: tenants.slug });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await db.insert(tenants).values(tenant as any).onConflictDoNothing({ target: tenants.slug });
     }
     log.push(`✅ ${SEED_TENANTS.length} tenants procesados`);
 
     // --- Step 3: Seed templates ---
     log.push('🌱 Insertando plantillas...');
     for (const template of SEED_TEMPLATES) {
-      await db.insert(templates).values(template).onConflictDoNothing({ target: templates.slug });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await db.insert(templates).values(template as any).onConflictDoNothing({ target: templates.slug });
     }
     log.push(`✅ ${SEED_TEMPLATES.length} plantillas procesadas`);
 

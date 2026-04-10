@@ -34,11 +34,7 @@ export const tenants = pgTable('tenants', {
   legalEntity: text('legal_entity').notNull(),
   brandVariants: jsonb('brand_variants').$type<string[]>().default([]),
   systemPromptBase: text('system_prompt_base').notNull(),
-  semillaVisual: jsonb('semilla_visual').$type<{
-    palette?: Record<string, string>;
-    style?: string;
-    notes?: string;
-  }>().default({}),
+  semillaVisual: jsonb('semilla_visual').$type<Record<string, unknown>>().default({}),
   canonicalAvatarUrl: text('canonical_avatar_url'),
   monthlyTokenLimit: integer('monthly_token_limit').default(1000000),
   active: boolean('active').notNull().default(true),
@@ -73,14 +69,7 @@ export const templates = pgTable('templates', {
   }).notNull(),
   idPrefix: text('id_prefix').notNull(),
   defaultClassification: text('default_classification').notNull(),
-  requiredVisualSlots: jsonb('required_visual_slots')
-    .$type<Array<{
-      type: 'hero_narrativa' | 'still_marca' | 'visual_cientifico' | 'gsv' | 'infografia';
-      required: boolean;
-      min?: number;
-      max?: number;
-    }>>()
-    .default([]),
+  requiredVisualSlots: jsonb('required_visual_slots').$type<unknown[]>().default([]),
   pipelinePhases: jsonb('pipeline_phases').$type<string[]>().default([]),
   systemPromptAddendum: text('system_prompt_addendum'),
   semillaVisualOverride: jsonb('semilla_visual_override').$type<Record<string, unknown>>(),
