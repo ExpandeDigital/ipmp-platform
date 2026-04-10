@@ -3,13 +3,14 @@
 /**
  * IP+MP Platform — Vista Detalle de Project (Client Component)
  *
- * REFACTORIZACIÓN 5d (Abril 2026):
- *   - Soporta projects sin tenant/template (fase InvestigaPress)
- *   - Generador de Ángulos con 3 campos (tema, audiencia, dato clave)
- *   - Validador de Tono integrado
- *   - Constructor de Pitch integrado
- *   - Traspaso inline IP→MP al avanzar de pesquisa a produccion
- *   - Parsing de nuevos campos: tipo, verificacion, pregunta_clave, lentes
+ * CHUNK 6 (Abril 2026):
+ *   - Generador de Hipótesis periodísticas (reemplaza conceptualmente al Generador de Ángulos)
+ *   - Tabs condicionales por fase del pipeline (PHASE_CONFIG)
+ *   - Hipótesis con campos nuevos: verificaciones_criticas, evidencia_requerida, riesgo_fabricacion
+ *   - Hipótesis elegida persistida en data.hipotesis_elegida y prellenada en Constructor de Pitch
+ *   - Radar Editorial (fase pesquisa): audita cobertura externa, historial en data.radar_editorial[]
+ *   - Validador de Tono restringido a fase revision, historial en data.validaciones_borrador[]
+ *   - Retrocompat: data.angulos y data.validacion_tono legacy se siguen leyendo (solo-read)
  */
 
 import { useState, useEffect, useCallback } from 'react';
@@ -46,7 +47,9 @@ interface ProjectDetail {
   pipelinePhases: string[];
 }
 
-interface Angulo {
+// Hipótesis = estructura nueva (Chunk 6). Los 3 últimos campos son opcionales
+// para poder parsear también data.angulos legacy sin reventar.
+interface Hipotesis {
   numero: number;
   tipo: string;
   titulo: string;
@@ -58,13 +61,23 @@ interface Angulo {
   verificacion: string;
   pregunta_clave: string;
   riesgo: string;
+  verificaciones_criticas?: string[];
+  evidencia_requerida?: string;
+  riesgo_fabricacion?: string;
 }
 
-interface AngulosData {
-  angulos: Angulo[];
+interface HipotesisData {
+  hipotesis: Hipotesis[];
   notaEditorial: string;
   tema: string;
+  audiencia?: string;
+  datoClave?: string;
   generadoEn: string;
+  modo?: string;
+}
+
+interface HipotesisElegida extends Hipotesis {
+  elegidaEn: string;
 }
 
 interface ValidacionDimension {
@@ -74,12 +87,44 @@ interface ValidacionDimension {
   sugerencias: string[];
 }
 
-interface ValidacionData {
+interface RadarEntry {
+  id: string;
+  medio: string;
+  url: string;
+  fecha_publicacion: string;
+  notas_propias: string;
+  texto_analizado: string;
+  evaluacion: ValidacionDimension[];
+  puntuacion_global: number;
+  veredicto: string;
+  resumen: string;
+  auditado_en: string;
+}
+
+interface ValidacionBorradorEntry {
+  id: string;
+  texto_analizado: string;
+  evaluacion: ValidacionDimension[];
+  puntuacion_global: number;
+  veredicto: string;
+  resumen: string;
+  validado_en: string;
+}
+
+// Legacy (retrocompat — Chunks 4-5)
+interface ValidacionLegacy {
   evaluacion: ValidacionDimension[];
   puntuacion_global: number;
   veredicto: string;
   resumen: string;
   texto: string;
+  generadoEn: string;
+}
+
+interface AngulosLegacy {
+  angulos: Hipotesis[];
+  notaEditorial: string;
+  tema: string;
   generadoEn: string;
 }
 
@@ -104,6 +149,14 @@ interface TemplateOption {
   family: string;
   idPrefix: string;
   reviewLevel: string;
+}
+
+type ActiveTool = 'hipotesis' | 'pitch' | 'radar' | 'validador';
+
+interface PhaseConfig {
+  tabs: { key: ActiveTool; label: string }[];
+  placeholder?: string;
+  info?: string;
 }
 
 // ══════════════════════════════════════════════════════
@@ -146,6 +199,18 @@ const VERIFICACION_COLORS: Record<string, string> = {
   requiere_pesquisa: 'bg-red-500/20 text-red-400 border-red-500/40',
 };
 
+const RIESGO_FAB_COLORS: Record<string, string> = {
+  bajo: 'bg-green-500/20 text-green-400 border-green-500/40',
+  medio: 'bg-amber-brand/20 text-amber-brand border-amber-brand/40',
+  alto: 'bg-red-500/20 text-red-400 border-red-500/40',
+};
+
+const RIESGO_FAB_LABELS: Record<string, string> = {
+  bajo: '🟢 Riesgo fabricación: BAJO',
+  medio: '🟡 Riesgo fabricación: MEDIO',
+  alto: '🔴 Riesgo fabricación: ALTO',
+};
+
 const VEREDICTO_LABELS: Record<string, { label: string; color: string }> = {
   publicable: { label: '✅ Publicable', color: 'text-green-400' },
   publicable_con_cambios: { label: '⚠️ Publicable con cambios', color: 'text-amber-brand' },
@@ -159,6 +224,98 @@ const FAMILY_LABELS: Record<string, string> = {
   institucional: 'Institucional',
   academico: 'Académico',
 };
+
+const PHASE_CONFIG: Record<string, PhaseConfig> = {
+  draft: {
+    tabs: [],
+    info: 'Borrador recién creado. Avanzá a Validación para generar hipótesis de investigación.',
+  },
+  validacion: {
+    tabs: [{ key: 'hipotesis', label: '🔬 Generador de Hipótesis' }],
+  },
+  pesquisa: {
+    tabs: [
+      { key: 'pitch', label: '📨 Constructor de Pitch' },
+      { key: 'radar', label: '📡 Radar Editorial' },
+    ],
+  },
+  produccion: {
+    tabs: [],
+    placeholder: 'Generador de Borrador — previsto para Chunk 8',
+  },
+  visual: {
+    tabs: [],
+    placeholder: 'Generador de Visuales — fase futura',
+  },
+  revision: {
+    tabs: [{ key: 'validador', label: '✅ Validador de Tono del Borrador' }],
+  },
+  aprobado: {
+    tabs: [],
+    info: 'Project aprobado. Listo para exportar.',
+  },
+  exportado: {
+    tabs: [],
+    placeholder: 'Exportador — fase futura',
+  },
+};
+
+// ══════════════════════════════════════════════════════
+// HELPERS
+// ══════════════════════════════════════════════════════
+function genId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function parseHipotesisFromRaw(a: Record<string, unknown>, idx: number): Hipotesis {
+  return {
+    numero: Number(a.numero ?? idx + 1),
+    tipo: String(a.tipo ?? a.type ?? 'noticia'),
+    titulo: String(a.titulo ?? a.title ?? 'Sin título'),
+    gancho: String(a.gancho ?? a.hook ?? ''),
+    audiencia: String(a.audiencia ?? a.audience ?? ''),
+    tono: String(a.tono ?? a.tone ?? ''),
+    lentes: Array.isArray(a.lentes) ? a.lentes.map(String) : [],
+    fuentes: Array.isArray(a.fuentes_sugeridas)
+      ? (a.fuentes_sugeridas as Hipotesis['fuentes'])
+      : Array.isArray(a.fuentes)
+      ? (a.fuentes as Hipotesis['fuentes'])
+      : [],
+    verificacion: String(a.verificacion ?? ''),
+    pregunta_clave: String(a.pregunta_clave ?? ''),
+    riesgo:
+      typeof a.riesgo === 'object' && a.riesgo
+        ? `${(a.riesgo as Record<string, unknown>).nivel ?? ''} — ${
+            (a.riesgo as Record<string, unknown>).justificacion ?? ''
+          }`
+        : String(a.riesgo ?? ''),
+    verificaciones_criticas: Array.isArray(a.verificaciones_criticas)
+      ? (a.verificaciones_criticas as unknown[]).map(String)
+      : undefined,
+    evidencia_requerida:
+      typeof a.evidencia_requerida === 'string' ? a.evidencia_requerida : undefined,
+    riesgo_fabricacion:
+      typeof a.riesgo_fabricacion === 'string' ? a.riesgo_fabricacion : undefined,
+  };
+}
+
+function parseValidacionDimensions(arr: unknown): ValidacionDimension[] {
+  if (!Array.isArray(arr)) return [];
+  return arr.map((d) => {
+    const dim = d as Record<string, unknown>;
+    return {
+      dimension: String(dim.dimension ?? ''),
+      puntuacion: Number(dim.puntuacion ?? 0),
+      hallazgos: Array.isArray(dim.hallazgos) ? (dim.hallazgos as unknown[]).map(String) : [],
+      sugerencias: Array.isArray(dim.sugerencias)
+        ? (dim.sugerencias as unknown[]).map(String)
+        : [],
+    };
+  });
+}
 
 // ══════════════════════════════════════════════════════
 // COMPONENTE PRINCIPAL
@@ -181,26 +338,39 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
   const [traspasoLoading, setTraspasoLoading] = useState(false);
   const [traspasoError, setTraspasoError] = useState<string | null>(null);
 
-  // Ángulos generator
-  const [angTema, setAngTema] = useState('');
-  const [angAudiencia, setAngAudiencia] = useState('');
-  const [angDato, setAngDato] = useState('');
-  const [generating, setGenerating] = useState(false);
-  const [genError, setGenError] = useState<string | null>(null);
-
-  // Validador de Tono
-  const [tonoTexto, setTonoTexto] = useState('');
-  const [validando, setValidando] = useState(false);
-  const [tonoError, setTonoError] = useState<string | null>(null);
+  // Generador de Hipótesis
+  const [hipTema, setHipTema] = useState('');
+  const [hipAudiencia, setHipAudiencia] = useState('');
+  const [hipDato, setHipDato] = useState('');
+  const [generandoHip, setGenerandoHip] = useState(false);
+  const [hipError, setHipError] = useState<string | null>(null);
+  const [eligiendo, setEligiendo] = useState<number | null>(null);
 
   // Constructor de Pitch
   const [pitchAngulo, setPitchAngulo] = useState('');
   const [pitchMedio, setPitchMedio] = useState('');
+  const [pitchTouched, setPitchTouched] = useState(false);
   const [construyendo, setConstruyendo] = useState(false);
   const [pitchError, setPitchError] = useState<string | null>(null);
 
-  // Active tool tab
-  const [activeTool, setActiveTool] = useState<'angulos' | 'validador' | 'pitch'>('angulos');
+  // Radar Editorial
+  const [radarMedio, setRadarMedio] = useState('');
+  const [radarUrl, setRadarUrl] = useState('');
+  const [radarFecha, setRadarFecha] = useState('');
+  const [radarNotas, setRadarNotas] = useState('');
+  const [radarTexto, setRadarTexto] = useState('');
+  const [auditandoRadar, setAuditandoRadar] = useState(false);
+  const [radarError, setRadarError] = useState<string | null>(null);
+  const [expandedRadar, setExpandedRadar] = useState<string | null>(null);
+
+  // Validador de Tono del Borrador (fase revision)
+  const [borradorTexto, setBorradorTexto] = useState('');
+  const [validandoBorrador, setValidandoBorrador] = useState(false);
+  const [borradorError, setBorradorError] = useState<string | null>(null);
+  const [expandedBorrador, setExpandedBorrador] = useState<string | null>(null);
+
+  // Active tool (default se reajusta por useEffect según fase)
+  const [activeTool, setActiveTool] = useState<ActiveTool>('hipotesis');
 
   // ── Cargar project ──
   const fetchProject = useCallback(async () => {
@@ -221,6 +391,31 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
     fetchProject();
   }, [fetchProject]);
 
+  // ── Ajustar tab activo cuando cambia la fase ──
+  useEffect(() => {
+    if (!project) return;
+    const cfg = PHASE_CONFIG[project.status];
+    if (!cfg || cfg.tabs.length === 0) return;
+    const validTools = cfg.tabs.map((t) => t.key);
+    if (!validTools.includes(activeTool)) {
+      setActiveTool(validTools[0]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project?.status]);
+
+  // ── Prefill del Constructor de Pitch desde hipótesis elegida ──
+  useEffect(() => {
+    if (!project || pitchTouched) return;
+    const raw = project.data?.hipotesis_elegida as Record<string, unknown> | undefined;
+    if (raw && typeof raw === 'object' && raw.titulo) {
+      const titulo = String(raw.titulo ?? '');
+      const gancho = String(raw.gancho ?? '');
+      const prefill = gancho ? `${titulo} — ${gancho}` : titulo;
+      setPitchAngulo(prefill);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project?.data?.hipotesis_elegida]);
+
   // ── Cargar config para traspaso ──
   async function loadConfig() {
     try {
@@ -233,15 +428,14 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
         if (json.templates?.length > 0) setTraspasoTemplate(json.templates[0].slug);
       }
     } catch {
-      // Silencioso — el form mostrará vacío
+      // Silencioso
     }
   }
 
-  // ── Avanzar/retroceder pipeline ──
+  // ── Pipeline actions ──
   async function handlePipelineAction(action: 'advance' | 'retreat') {
     if (!project || actionLoading) return;
 
-    // Traspaso check: si está en pesquisa y quiere avanzar, mostrar form
     if (action === 'advance' && project.status === 'pesquisa' && !project.hasTenant) {
       setShowTraspaso(true);
       loadConfig();
@@ -257,7 +451,6 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
       });
       const json = await res.json();
       if (!res.ok) {
-        // Si backend exige traspaso, mostrar form
         if (json.code === 'TRASPASO_REQUIRED') {
           setShowTraspaso(true);
           loadConfig();
@@ -273,7 +466,6 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
     }
   }
 
-  // ── Ejecutar traspaso ──
   async function handleTraspaso() {
     if (!project || !traspasoTenant || !traspasoTemplate) return;
     setTraspasoLoading(true);
@@ -302,26 +494,23 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
     }
   }
 
-  // ── Generar ángulos ──
-  async function handleGenerateAngulos() {
-    if (!project || !angTema.trim()) return;
-    setGenerating(true);
-    setGenError(null);
+  // ── Generar Hipótesis ──
+  async function handleGenerateHipotesis() {
+    if (!project || !hipTema.trim()) return;
+    setGenerandoHip(true);
+    setHipError(null);
 
-    // Construir mensaje compuesto
-    let userMessage = `TEMA: ${angTema.trim()}`;
-    if (angAudiencia.trim()) userMessage += `\nAUDIENCIA OBJETIVO: ${angAudiencia.trim()}`;
-    if (angDato.trim()) userMessage += `\nDATO CLAVE: ${angDato.trim()}`;
+    let userMessage = `TEMA: ${hipTema.trim()}`;
+    if (hipAudiencia.trim()) userMessage += `\nAUDIENCIA OBJETIVO: ${hipAudiencia.trim()}`;
+    if (hipDato.trim()) userMessage += `\nDATO CLAVE DE CONTEXTO: ${hipDato.trim()}`;
     if (project.thesis) userMessage += `\nTESIS DEL PROJECT: ${project.thesis}`;
 
     try {
-      // Construir body según fase
       const genBody: Record<string, unknown> = {
         tool: 'generador_angulos',
         userMessage,
         projectId: project.id,
       };
-      // Si tiene tenant/template (MetricPress), incluirlos
       if (project.hasTenant && project.tenantSlug && project.templateSlug) {
         genBody.tenantSlug = project.tenantSlug;
         genBody.templateSlug = project.templateSlug;
@@ -333,16 +522,17 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
         body: JSON.stringify(genBody),
       });
       const genJson = await genRes.json();
-      if (!genRes.ok) throw new Error(genJson.error || 'Error generando ángulos');
+      if (!genRes.ok) throw new Error(genJson.error || 'Error generando hipótesis');
 
-      // Guardar resultado
       const result = genJson.result ?? {};
-      const angulosPayload = {
-        angulos: result.angulos ?? [],
+      // La clave que devuelve el modelo sigue siendo "angulos" por contrato,
+      // pero conceptualmente son hipótesis. La guardamos bajo data.hipotesis.
+      const hipotesisPayload = {
+        hipotesis: result.angulos ?? [],
         notaEditorial: result.nota_editorial ?? '',
-        tema: angTema.trim(),
-        audiencia: angAudiencia.trim(),
-        datoClave: angDato.trim(),
+        tema: hipTema.trim(),
+        audiencia: hipAudiencia.trim(),
+        datoClave: hipDato.trim(),
         generadoEn: new Date().toISOString(),
         modo: genJson.mode,
       };
@@ -350,31 +540,75 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
       const patchRes = await fetch(`/api/projects/${project.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data: { angulos: angulosPayload } }),
+        body: JSON.stringify({ data: { hipotesis: hipotesisPayload } }),
       });
       if (!patchRes.ok) {
         const pj = await patchRes.json();
-        throw new Error(pj.error || 'Error guardando ángulos');
+        throw new Error(pj.error || 'Error guardando hipótesis');
       }
 
       await fetchProject();
     } catch (err) {
-      setGenError(err instanceof Error ? err.message : 'Error desconocido');
+      setHipError(err instanceof Error ? err.message : 'Error desconocido');
     } finally {
-      setGenerating(false);
+      setGenerandoHip(false);
     }
   }
 
-  // ── Validar tono ──
-  async function handleValidarTono() {
-    if (!project || !tonoTexto.trim()) return;
-    setValidando(true);
-    setTonoError(null);
+  // ── Elegir hipótesis ──
+  async function handleElegirHipotesis(h: Hipotesis, idx: number) {
+    if (!project) return;
+    setEligiendo(idx);
+    try {
+      const elegida: HipotesisElegida = { ...h, elegidaEn: new Date().toISOString() };
+      const res = await fetch(`/api/projects/${project.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: { hipotesis_elegida: elegida } }),
+      });
+      if (!res.ok) {
+        const pj = await res.json();
+        throw new Error(pj.error || 'Error eligiendo hipótesis');
+      }
+      await fetchProject();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Error desconocido');
+    } finally {
+      setEligiendo(null);
+    }
+  }
+
+  // ── Cambiar elección ──
+  async function handleCambiarEleccion() {
+    if (!project) return;
+    if (!confirm('¿Cambiar la hipótesis elegida? Vas a poder elegir otra del listado.')) return;
+    try {
+      const res = await fetch(`/api/projects/${project.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: { hipotesis_elegida: null } }),
+      });
+      if (!res.ok) {
+        const pj = await res.json();
+        throw new Error(pj.error || 'Error limpiando elección');
+      }
+      setPitchTouched(false); // permitir re-prefill si elige otra
+      await fetchProject();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Error desconocido');
+    }
+  }
+
+  // ── Auditar cobertura externa (Radar Editorial) ──
+  async function handleAuditarRadar() {
+    if (!project || !radarMedio.trim() || !radarTexto.trim()) return;
+    setAuditandoRadar(true);
+    setRadarError(null);
 
     try {
       const genBody: Record<string, unknown> = {
         tool: 'validador_tono',
-        userMessage: tonoTexto.trim(),
+        userMessage: radarTexto.trim(),
         projectId: project.id,
       };
       if (project.hasTenant && project.tenantSlug && project.templateSlug) {
@@ -388,29 +622,110 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
         body: JSON.stringify(genBody),
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Error validando tono');
+      if (!res.ok) throw new Error(json.error || 'Error auditando texto');
 
       const result = json.result ?? {};
-      const validacionPayload = {
-        evaluacion: result.evaluacion ?? [],
-        puntuacion_global: result.puntuacion_global ?? 0,
-        veredicto: result.veredicto ?? 'requiere_revision',
-        resumen: result.resumen ?? '',
-        texto: tonoTexto.trim().slice(0, 200) + '…',
-        generadoEn: new Date().toISOString(),
+      const entry: RadarEntry = {
+        id: genId(),
+        medio: radarMedio.trim(),
+        url: radarUrl.trim(),
+        fecha_publicacion: radarFecha.trim(),
+        notas_propias: radarNotas.trim(),
+        texto_analizado: radarTexto.trim().slice(0, 300),
+        evaluacion: parseValidacionDimensions(result.evaluacion),
+        puntuacion_global: Number(result.puntuacion_global ?? 0),
+        veredicto: String(result.veredicto ?? 'requiere_revision'),
+        resumen: String(result.resumen ?? ''),
+        auditado_en: new Date().toISOString(),
       };
 
-      await fetch(`/api/projects/${project.id}`, {
+      const currentRaw = project.data?.radar_editorial;
+      const current: RadarEntry[] = Array.isArray(currentRaw)
+        ? (currentRaw as RadarEntry[])
+        : [];
+      const next = [...current, entry];
+
+      const patchRes = await fetch(`/api/projects/${project.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data: { validacion_tono: validacionPayload } }),
+        body: JSON.stringify({ data: { radar_editorial: next } }),
       });
+      if (!patchRes.ok) {
+        const pj = await patchRes.json();
+        throw new Error(pj.error || 'Error guardando auditoría');
+      }
 
+      setRadarMedio('');
+      setRadarUrl('');
+      setRadarFecha('');
+      setRadarNotas('');
+      setRadarTexto('');
       await fetchProject();
     } catch (err) {
-      setTonoError(err instanceof Error ? err.message : 'Error desconocido');
+      setRadarError(err instanceof Error ? err.message : 'Error desconocido');
     } finally {
-      setValidando(false);
+      setAuditandoRadar(false);
+    }
+  }
+
+  // ── Validar borrador propio (fase revision) ──
+  async function handleValidarBorrador() {
+    if (!project || !borradorTexto.trim()) return;
+    setValidandoBorrador(true);
+    setBorradorError(null);
+
+    try {
+      const genBody: Record<string, unknown> = {
+        tool: 'validador_tono',
+        userMessage: borradorTexto.trim(),
+        projectId: project.id,
+      };
+      if (project.hasTenant && project.tenantSlug && project.templateSlug) {
+        genBody.tenantSlug = project.tenantSlug;
+        genBody.templateSlug = project.templateSlug;
+      }
+
+      const res = await fetch('/api/ai/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(genBody),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Error validando borrador');
+
+      const result = json.result ?? {};
+      const entry: ValidacionBorradorEntry = {
+        id: genId(),
+        texto_analizado: borradorTexto.trim().slice(0, 300),
+        evaluacion: parseValidacionDimensions(result.evaluacion),
+        puntuacion_global: Number(result.puntuacion_global ?? 0),
+        veredicto: String(result.veredicto ?? 'requiere_revision'),
+        resumen: String(result.resumen ?? ''),
+        validado_en: new Date().toISOString(),
+      };
+
+      const currentRaw = project.data?.validaciones_borrador;
+      const current: ValidacionBorradorEntry[] = Array.isArray(currentRaw)
+        ? (currentRaw as ValidacionBorradorEntry[])
+        : [];
+      const next = [...current, entry];
+
+      const patchRes = await fetch(`/api/projects/${project.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: { validaciones_borrador: next } }),
+      });
+      if (!patchRes.ok) {
+        const pj = await patchRes.json();
+        throw new Error(pj.error || 'Error guardando validación');
+      }
+
+      setBorradorTexto('');
+      await fetchProject();
+    } catch (err) {
+      setBorradorError(err instanceof Error ? err.message : 'Error desconocido');
+    } finally {
+      setValidandoBorrador(false);
     }
   }
 
@@ -495,57 +810,127 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
   // PARSING DEFENSIVO DE DATA
   // ══════════════════════════════════════════════════════
   const isIPPhase = IP_PHASES.includes(project.status);
+  const phaseConfig = PHASE_CONFIG[project.status] ?? { tabs: [] };
 
-  // ── Ángulos guardados ──
-  let savedAngulos: AngulosData | null = null;
+  // ── Hipótesis (nuevo, Chunk 6) ──
+  let savedHipotesis: HipotesisData | null = null;
+  try {
+    const raw = project.data?.hipotesis as Record<string, unknown> | undefined;
+    if (raw && typeof raw === 'object') {
+      const rawList = (raw.hipotesis ?? raw.angulos ?? []) as unknown[];
+      const list = Array.isArray(rawList) ? rawList : [];
+      const parsed = list.map((a, idx) =>
+        parseHipotesisFromRaw(a as Record<string, unknown>, idx)
+      );
+      if (parsed.length > 0) {
+        savedHipotesis = {
+          hipotesis: parsed,
+          notaEditorial: String(raw.notaEditorial ?? raw.nota_editorial ?? ''),
+          tema: String(raw.tema ?? ''),
+          audiencia: raw.audiencia ? String(raw.audiencia) : undefined,
+          datoClave: raw.datoClave ? String(raw.datoClave) : undefined,
+          generadoEn: String(raw.generadoEn ?? ''),
+          modo: raw.modo ? String(raw.modo) : undefined,
+        };
+      }
+    }
+  } catch {
+    savedHipotesis = null;
+  }
+
+  // ── Ángulos legacy (retrocompat — DREAMOMS-RP-2026-0001 y proyectos pre-Chunk 6) ──
+  let savedAngulosLegacy: AngulosLegacy | null = null;
   try {
     const raw = project.data?.angulos as Record<string, unknown> | undefined;
     if (raw && typeof raw === 'object') {
-      const rawAngulos = raw.angulos ?? [];
-      const angulosList = Array.isArray(rawAngulos) ? rawAngulos : [];
-
-      savedAngulos = {
-        angulos: angulosList.map((a: Record<string, unknown>, idx: number) => ({
-          numero: Number(a.numero ?? idx + 1),
-          tipo: String(a.tipo ?? a.type ?? 'noticia'),
-          titulo: String(a.titulo ?? a.title ?? 'Sin título'),
-          gancho: String(a.gancho ?? a.hook ?? ''),
-          audiencia: String(a.audiencia ?? a.audience ?? ''),
-          tono: String(a.tono ?? a.tone ?? ''),
-          lentes: Array.isArray(a.lentes) ? a.lentes.map(String) : [],
-          fuentes: Array.isArray(a.fuentes_sugeridas)
-            ? a.fuentes_sugeridas
-            : Array.isArray(a.fuentes)
-            ? a.fuentes
-            : [],
-          verificacion: String(a.verificacion ?? ''),
-          pregunta_clave: String(a.pregunta_clave ?? ''),
-          riesgo: typeof a.riesgo === 'object' && a.riesgo
-            ? `${(a.riesgo as Record<string, unknown>).nivel ?? ''} — ${(a.riesgo as Record<string, unknown>).justificacion ?? ''}`
-            : String(a.riesgo ?? ''),
-        })),
-        notaEditorial: String(raw.notaEditorial ?? raw.nota_editorial ?? ''),
-        tema: String(raw.tema ?? ''),
-        generadoEn: String(raw.generadoEn ?? ''),
-      };
-      if (savedAngulos.angulos.length === 0) savedAngulos = null;
+      const rawList = (raw.angulos ?? []) as unknown[];
+      const list = Array.isArray(rawList) ? rawList : [];
+      const parsed = list.map((a, idx) =>
+        parseHipotesisFromRaw(a as Record<string, unknown>, idx)
+      );
+      if (parsed.length > 0) {
+        savedAngulosLegacy = {
+          angulos: parsed,
+          notaEditorial: String(raw.notaEditorial ?? raw.nota_editorial ?? ''),
+          tema: String(raw.tema ?? ''),
+          generadoEn: String(raw.generadoEn ?? ''),
+        };
+      }
     }
   } catch {
-    savedAngulos = null;
+    savedAngulosLegacy = null;
   }
 
-  // ── Validación de tono guardada ──
-  let savedValidacion: ValidacionData | null = null;
+  // ── Hipótesis elegida ──
+  let savedHipotesisElegida: HipotesisElegida | null = null;
+  try {
+    const raw = project.data?.hipotesis_elegida as Record<string, unknown> | undefined;
+    if (raw && typeof raw === 'object' && raw.titulo) {
+      const parsed = parseHipotesisFromRaw(raw, 0);
+      savedHipotesisElegida = {
+        ...parsed,
+        elegidaEn: String(raw.elegidaEn ?? ''),
+      };
+    }
+  } catch {
+    savedHipotesisElegida = null;
+  }
+
+  // ── Radar editorial historial ──
+  let savedRadar: RadarEntry[] = [];
+  try {
+    const raw = project.data?.radar_editorial;
+    if (Array.isArray(raw)) {
+      savedRadar = (raw as unknown[]).map((r) => {
+        const e = r as Record<string, unknown>;
+        return {
+          id: String(e.id ?? genId()),
+          medio: String(e.medio ?? ''),
+          url: String(e.url ?? ''),
+          fecha_publicacion: String(e.fecha_publicacion ?? ''),
+          notas_propias: String(e.notas_propias ?? ''),
+          texto_analizado: String(e.texto_analizado ?? ''),
+          evaluacion: parseValidacionDimensions(e.evaluacion),
+          puntuacion_global: Number(e.puntuacion_global ?? 0),
+          veredicto: String(e.veredicto ?? ''),
+          resumen: String(e.resumen ?? ''),
+          auditado_en: String(e.auditado_en ?? ''),
+        };
+      });
+    }
+  } catch {
+    savedRadar = [];
+  }
+
+  // ── Validaciones de borrador historial ──
+  let savedValidacionesBorrador: ValidacionBorradorEntry[] = [];
+  try {
+    const raw = project.data?.validaciones_borrador;
+    if (Array.isArray(raw)) {
+      savedValidacionesBorrador = (raw as unknown[]).map((v) => {
+        const e = v as Record<string, unknown>;
+        return {
+          id: String(e.id ?? genId()),
+          texto_analizado: String(e.texto_analizado ?? ''),
+          evaluacion: parseValidacionDimensions(e.evaluacion),
+          puntuacion_global: Number(e.puntuacion_global ?? 0),
+          veredicto: String(e.veredicto ?? ''),
+          resumen: String(e.resumen ?? ''),
+          validado_en: String(e.validado_en ?? ''),
+        };
+      });
+    }
+  } catch {
+    savedValidacionesBorrador = [];
+  }
+
+  // ── Validación legacy (retrocompat) ──
+  let savedValidacionLegacy: ValidacionLegacy | null = null;
   try {
     const raw = project.data?.validacion_tono as Record<string, unknown> | undefined;
     if (raw && typeof raw === 'object' && Array.isArray(raw.evaluacion)) {
-      savedValidacion = {
-        evaluacion: (raw.evaluacion as Record<string, unknown>[]).map((d) => ({
-          dimension: String(d.dimension ?? ''),
-          puntuacion: Number(d.puntuacion ?? 0),
-          hallazgos: Array.isArray(d.hallazgos) ? d.hallazgos.map(String) : [],
-          sugerencias: Array.isArray(d.sugerencias) ? d.sugerencias.map(String) : [],
-        })),
+      savedValidacionLegacy = {
+        evaluacion: parseValidacionDimensions(raw.evaluacion),
         puntuacion_global: Number(raw.puntuacion_global ?? 0),
         veredicto: String(raw.veredicto ?? ''),
         resumen: String(raw.resumen ?? ''),
@@ -554,7 +939,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
       };
     }
   } catch {
-    savedValidacion = null;
+    savedValidacionLegacy = null;
   }
 
   // ── Pitch guardado ──
@@ -577,14 +962,235 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
 
   // ── Tenant seleccionado para traspaso ──
   const selectedTraspasoTenant = tenantsList.find((t) => t.slug === traspasoTenant);
-  const hasBrandVariants = selectedTraspasoTenant?.brandVariants && selectedTraspasoTenant.brandVariants.length > 0;
+  const hasBrandVariants =
+    selectedTraspasoTenant?.brandVariants && selectedTraspasoTenant.brandVariants.length > 0;
 
-  // Agrupar templates por familia
   const templatesByFamily = templatesList.reduce<Record<string, TemplateOption[]>>((acc, t) => {
     if (!acc[t.family]) acc[t.family] = [];
     acc[t.family].push(t);
     return acc;
   }, {});
+
+  // Key del título de la hipótesis elegida (para marcar en el listado)
+  const elegidaKey = savedHipotesisElegida?.titulo ?? null;
+
+  // ══════════════════════════════════════════════════════
+  // HELPERS DE RENDER (closures — acceden a state/handlers)
+  // ══════════════════════════════════════════════════════
+  function renderDimensions(dims: ValidacionDimension[]) {
+    return (
+      <div className="space-y-3">
+        {dims.map((dim, di) => (
+          <div key={di} className="bg-space-cadet rounded-lg border border-davy-gray/15 p-3">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-seasalt text-sm font-medium capitalize">
+                {dim.dimension.replace(/_/g, ' ')}
+              </h4>
+              <div className="flex gap-0.5">
+                {[1, 2, 3, 4, 5].map((n) => (
+                  <span
+                    key={n}
+                    className={`w-5 h-2 rounded-full ${
+                      n <= dim.puntuacion ? 'bg-amber-brand' : 'bg-davy-gray/20'
+                    }`}
+                  />
+                ))}
+              </div>
+            </div>
+            {dim.hallazgos.length > 0 && (
+              <div className="mb-1">
+                {dim.hallazgos.map((h, hi) => (
+                  <p key={hi} className="text-red-400/80 text-xs mb-0.5">
+                    ⚠ {h}
+                  </p>
+                ))}
+              </div>
+            )}
+            {dim.sugerencias.length > 0 && (
+              <div>
+                {dim.sugerencias.map((s, si) => (
+                  <p key={si} className="text-green-400/80 text-xs mb-0.5">
+                    → {s}
+                  </p>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  function renderHipotesisCard(h: Hipotesis, idx: number, isElegida: boolean) {
+    const isChosen = !isElegida && elegidaKey !== null && elegidaKey === h.titulo;
+    return (
+      <div
+        className={`rounded-lg p-4 ${
+          isElegida
+            ? 'bg-oxford-blue border border-amber-brand/30'
+            : isChosen
+            ? 'bg-oxford-blue border-2 border-amber-brand/60 ring-1 ring-amber-brand/30'
+            : 'bg-oxford-blue border border-davy-gray/15'
+        }`}
+      >
+        {/* Header con tipo + título + badge elegida + badge verificación */}
+        <div className="flex items-start justify-between mb-2 gap-2">
+          <div className="flex items-center gap-2 flex-wrap flex-1 min-w-0">
+            <span className="text-xs">{TIPO_LABELS[h.tipo] ?? h.tipo}</span>
+            {isChosen && (
+              <span className="bg-amber-brand/20 text-amber-brand border border-amber-brand/40 px-2 py-0.5 rounded text-xs font-bold">
+                ⭐ ELEGIDA
+              </span>
+            )}
+            <h3 className="text-seasalt font-medium text-sm w-full">
+              {!isElegida ? `${h.numero}. ` : ''}
+              {h.titulo}
+            </h3>
+          </div>
+          {h.verificacion && (
+            <span
+              className={`px-2 py-0.5 rounded text-xs font-medium border whitespace-nowrap ${
+                VERIFICACION_COLORS[h.verificacion] ??
+                'bg-davy-gray/20 text-davy-gray border-davy-gray/40'
+              }`}
+            >
+              {h.verificacion.replace(/_/g, ' ')}
+            </span>
+          )}
+        </div>
+
+        {/* Badge riesgo_fabricacion (solo si existe — Chunk 6+) */}
+        {h.riesgo_fabricacion && (
+          <div className="mb-2">
+            <span
+              className={`inline-block px-2 py-0.5 rounded text-xs font-semibold border ${
+                RIESGO_FAB_COLORS[h.riesgo_fabricacion] ??
+                'bg-davy-gray/20 text-davy-gray border-davy-gray/40'
+              }`}
+            >
+              {RIESGO_FAB_LABELS[h.riesgo_fabricacion] ??
+                `Riesgo fabricación: ${h.riesgo_fabricacion}`}
+            </span>
+          </div>
+        )}
+
+        {/* Gancho */}
+        {h.gancho && (
+          <p className="text-davy-gray text-sm mb-2">
+            <span className="text-amber-brand/80">Gancho:</span> {h.gancho}
+          </p>
+        )}
+
+        {/* Pregunta clave */}
+        {h.pregunta_clave && (
+          <p className="text-davy-gray text-sm mb-2">
+            <span className="text-blue-400/80">Pregunta clave:</span> {h.pregunta_clave}
+          </p>
+        )}
+
+        {/* Meta: audiencia, tono, riesgo editorial */}
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-davy-gray mb-3">
+          {h.audiencia && (
+            <span>
+              👥 <span className="text-seasalt/70">{h.audiencia}</span>
+            </span>
+          )}
+          {h.tono && (
+            <span>
+              🎭 <span className="text-seasalt/70">{h.tono}</span>
+            </span>
+          )}
+          {h.riesgo && (
+            <span>
+              ⚠️ <span className="text-seasalt/70">{h.riesgo}</span>
+            </span>
+          )}
+        </div>
+
+        {/* Lentes */}
+        {h.lentes.length > 0 && (
+          <div className="flex gap-1.5 mb-3 flex-wrap">
+            {h.lentes.map((lente, li) => (
+              <span
+                key={li}
+                className="px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 text-xs border border-blue-500/20"
+              >
+                {lente.replace(/_/g, ' ')}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* Verificaciones críticas con checkboxes visuales (Chunk 6+) */}
+        {h.verificaciones_criticas && h.verificaciones_criticas.length > 0 && (
+          <div className="mt-3 mb-3 bg-blue-500/5 border border-blue-500/20 rounded p-3">
+            <p className="text-xs text-blue-400 font-semibold uppercase tracking-wider mb-2">
+              🔍 Verificaciones críticas antes de publicar
+            </p>
+            <ul className="space-y-1.5">
+              {h.verificaciones_criticas.map((vc, vi) => (
+                <li key={vi} className="flex items-start gap-2 text-sm text-seasalt/80">
+                  <span
+                    className="flex-shrink-0 mt-0.5 w-4 h-4 border border-blue-400/50 rounded-sm bg-oxford-blue"
+                    aria-hidden="true"
+                  />
+                  <span>{vc}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* Evidencia requerida (Chunk 6+) */}
+        {h.evidencia_requerida && (
+          <div className="mt-3 mb-3 bg-amber-brand/5 border border-amber-brand/25 rounded p-3">
+            <p className="text-xs text-amber-brand font-semibold uppercase tracking-wider mb-1">
+              📚 Evidencia requerida
+            </p>
+            <p className="text-sm text-seasalt/80">{h.evidencia_requerida}</p>
+          </div>
+        )}
+
+        {/* Fuentes tipo */}
+        {h.fuentes.length > 0 && (
+          <div className="mt-2 text-xs text-davy-gray">
+            📚 Fuentes tipo:{' '}
+            {h.fuentes.map((f, fi) => (
+              <span key={fi}>
+                {typeof f === 'object' && f
+                  ? `${(f as Record<string, string>).cargo}, ${
+                      (f as Record<string, string>).institucion
+                    } (${(f as Record<string, string>).pais})`
+                  : String(f)}
+                {fi < h.fuentes.length - 1 ? ' · ' : ''}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* Botón elegir (solo en el listado, no en la card destacada de "hipótesis elegida") */}
+        {!isElegida && (
+          <div className="mt-4 pt-3 border-t border-davy-gray/15 flex justify-end">
+            <button
+              onClick={() => handleElegirHipotesis(h, idx)}
+              disabled={eligiendo !== null || isChosen}
+              className={`px-4 py-1.5 rounded text-xs font-semibold transition-colors ${
+                isChosen
+                  ? 'bg-amber-brand/20 text-amber-brand border border-amber-brand/40 cursor-default'
+                  : 'bg-amber-brand/10 border border-amber-brand/30 text-amber-brand hover:bg-amber-brand/20'
+              } disabled:opacity-40 disabled:cursor-not-allowed`}
+            >
+              {eligiendo === idx
+                ? 'Eligiendo…'
+                : isChosen
+                ? '⭐ ELEGIDA'
+                : '⭐ Elegir esta hipótesis'}
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   // ══════════════════════════════════════════════════════
   // RENDER
@@ -604,11 +1210,13 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
             <h1 className="text-2xl font-bold text-seasalt">{project.title}</h1>
             <div className="flex items-center gap-3 mt-1">
               <p className="font-mono text-amber-brand text-sm">{project.publicId}</p>
-              <span className={`px-2 py-0.5 rounded text-xs font-bold ${
-                isIPPhase
-                  ? 'bg-blue-500/20 text-blue-400 border border-blue-500/40'
-                  : 'bg-amber-brand/20 text-amber-brand border border-amber-brand/40'
-              }`}>
+              <span
+                className={`px-2 py-0.5 rounded text-xs font-bold ${
+                  isIPPhase
+                    ? 'bg-blue-500/20 text-blue-400 border border-blue-500/40'
+                    : 'bg-amber-brand/20 text-amber-brand border border-amber-brand/40'
+                }`}
+              >
                 {isIPPhase ? '🔍 InvestigaPress' : '⚙️ MetricPress'}
               </span>
             </div>
@@ -653,18 +1261,34 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
               const isPast = idx < project.pipelineIndex;
               const isFuture = idx > project.pipelineIndex;
               const isIPBar = IP_PHASES.includes(phase);
+              const showElegidaBadge = phase === 'validacion' && !!savedHipotesisElegida;
 
               return (
                 <div
                   key={phase}
                   className={`flex-1 rounded-md py-3 px-2 text-center text-xs font-medium transition-all
-                    ${isCurrent ? 'bg-amber-brand text-oxford-blue ring-2 ring-amber-brand/50 scale-[1.02]' : ''}
-                    ${isPast ? (isIPBar ? 'bg-blue-500/20 text-blue-400/80' : 'bg-amber-brand/20 text-amber-brand/80') : ''}
+                    ${
+                      isCurrent
+                        ? 'bg-amber-brand text-oxford-blue ring-2 ring-amber-brand/50 scale-[1.02]'
+                        : ''
+                    }
+                    ${
+                      isPast
+                        ? isIPBar
+                          ? 'bg-blue-500/20 text-blue-400/80'
+                          : 'bg-amber-brand/20 text-amber-brand/80'
+                        : ''
+                    }
                     ${isFuture ? 'bg-davy-gray/10 text-davy-gray/50' : ''}
                   `}
                 >
                   <div className="text-base mb-1">{PHASE_ICONS[phase] ?? '○'}</div>
-                  {PHASE_LABELS[phase] ?? phase}
+                  <div>{PHASE_LABELS[phase] ?? phase}</div>
+                  {showElegidaBadge && (
+                    <div className="mt-1 text-[10px] leading-none font-semibold">
+                      ⭐ elegida
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -687,7 +1311,9 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
         {/* ── Traspaso Form (inline) ── */}
         {showTraspaso && (
           <section className="bg-space-cadet rounded-lg border-2 border-amber-brand/50 p-6">
-            <h2 className="text-amber-brand font-semibold mb-1">Traspaso: InvestigaPress → MetricPress</h2>
+            <h2 className="text-amber-brand font-semibold mb-1">
+              Traspaso: InvestigaPress → MetricPress
+            </h2>
             <p className="text-davy-gray text-sm mb-4">
               Para avanzar a Producción, asigná la marca y el tipo de pieza.
             </p>
@@ -700,11 +1326,16 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
                 </label>
                 <select
                   value={traspasoTenant}
-                  onChange={(e) => { setTraspasoTenant(e.target.value); setTraspasoBrandVariant(''); }}
+                  onChange={(e) => {
+                    setTraspasoTenant(e.target.value);
+                    setTraspasoBrandVariant('');
+                  }}
                   className="w-full bg-oxford-blue border border-davy-gray/50 rounded px-3 py-2.5 text-seasalt text-sm focus:outline-none focus:border-amber-brand"
                 >
                   {tenantsList.map((t) => (
-                    <option key={t.slug} value={t.slug}>{t.name}</option>
+                    <option key={t.slug} value={t.slug}>
+                      {t.name}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -722,7 +1353,9 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
                   >
                     <option value="">Sin variante</option>
                     {selectedTraspasoTenant?.brandVariants?.map((bv) => (
-                      <option key={bv} value={bv}>{bv}</option>
+                      <option key={bv} value={bv}>
+                        {bv}
+                      </option>
                     ))}
                   </select>
                 </div>
@@ -755,7 +1388,9 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
                 <div className="bg-oxford-blue rounded p-3 border border-davy-gray/20">
                   <p className="text-xs text-davy-gray mb-1">Nuevo PublicId:</p>
                   <p className="text-amber-brand font-mono">
-                    {traspasoTenant.toUpperCase()}-{templatesList.find(t => t.slug === traspasoTemplate)?.idPrefix ?? '??'}-{new Date().getFullYear()}-XXXX
+                    {traspasoTenant.toUpperCase()}-
+                    {templatesList.find((t) => t.slug === traspasoTemplate)?.idPrefix ?? '??'}-
+                    {new Date().getFullYear()}-XXXX
                   </p>
                 </div>
               )}
@@ -778,9 +1413,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
                 </button>
               </div>
 
-              {traspasoError && (
-                <p className="text-red-400 text-sm">{traspasoError}</p>
-              )}
+              {traspasoError && <p className="text-red-400 text-sm">{traspasoError}</p>}
             </div>
           </section>
         )}
@@ -792,13 +1425,17 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
             <div>
               <span className="text-davy-gray">Tenant:</span>
               <span className="text-seasalt ml-2">
-                {project.tenantName ?? <span className="text-davy-gray/50 italic">Sin asignar (InvestigaPress)</span>}
+                {project.tenantName ?? (
+                  <span className="text-davy-gray/50 italic">Sin asignar (InvestigaPress)</span>
+                )}
               </span>
             </div>
             <div>
               <span className="text-davy-gray">Template:</span>
               <span className="text-seasalt ml-2">
-                {project.templateName ?? <span className="text-davy-gray/50 italic">Sin asignar</span>}
+                {project.templateName ?? (
+                  <span className="text-davy-gray/50 italic">Sin asignar</span>
+                )}
               </span>
             </div>
             {project.templateFamily && (
@@ -823,7 +1460,11 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
               <span className="text-davy-gray">Creado:</span>
               <span className="text-seasalt ml-2">
                 {new Date(project.createdAt).toLocaleDateString('es-CL', {
-                  day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+                  day: '2-digit',
+                  month: 'short',
+                  year: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit',
                 })}
               </span>
             </div>
@@ -836,117 +1477,150 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
           )}
         </section>
 
-        {/* ── Herramientas InvestigaPress (tabs) ── */}
+        {/* ══════════════════════════════════════════════════════ */}
+        {/* ── Herramientas condicionales por fase del pipeline ── */}
+        {/* ══════════════════════════════════════════════════════ */}
         <section className="bg-space-cadet rounded-lg border border-davy-gray/20 overflow-hidden">
-          {/* Tab bar */}
-          <div className="flex border-b border-davy-gray/20">
-            {[
-              { key: 'angulos' as const, label: '⚡ Ángulos', icon: '' },
-              { key: 'validador' as const, label: '✅ Validador de Tono', icon: '' },
-              { key: 'pitch' as const, label: '📨 Constructor de Pitch', icon: '' },
-            ].map((tab) => (
-              <button
-                key={tab.key}
-                onClick={() => setActiveTool(tab.key)}
-                className={`flex-1 py-3 px-4 text-sm font-medium transition-colors ${
-                  activeTool === tab.key
-                    ? 'bg-oxford-blue text-amber-brand border-b-2 border-amber-brand'
-                    : 'text-davy-gray hover:text-seasalt'
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
+          {/* Tab bar — solo si hay 2+ tabs */}
+          {phaseConfig.tabs.length > 1 && (
+            <div className="flex border-b border-davy-gray/20">
+              {phaseConfig.tabs.map((tab) => (
+                <button
+                  key={tab.key}
+                  onClick={() => setActiveTool(tab.key)}
+                  className={`flex-1 py-3 px-4 text-sm font-medium transition-colors ${
+                    activeTool === tab.key
+                      ? 'bg-oxford-blue text-amber-brand border-b-2 border-amber-brand'
+                      : 'text-davy-gray hover:text-seasalt'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Header — para fases con un único tab activo */}
+          {phaseConfig.tabs.length === 1 && (
+            <div className="px-6 pt-5 pb-3 border-b border-davy-gray/20">
+              <h2 className="text-amber-brand font-semibold">{phaseConfig.tabs[0].label}</h2>
+            </div>
+          )}
 
           <div className="p-6">
-            {/* ── TAB: Generador de Ángulos ── */}
-            {activeTool === 'angulos' && (
-              <div>
-                <p className="text-davy-gray text-sm mb-4">
-                  {isIPPhase
-                    ? 'Genera ángulos periodísticos puros — sin sesgo de marca.'
-                    : `Genera ángulos con contexto de ${project.tenantName ?? 'marca'}.`
-                  }
+            {/* ── Placeholder destacado (produccion, visual, exportado) ── */}
+            {phaseConfig.tabs.length === 0 && phaseConfig.placeholder && (
+              <div className="text-center py-12">
+                <div className="text-6xl mb-4">🛠️</div>
+                <p className="text-davy-gray text-lg">{phaseConfig.placeholder}</p>
+                <p className="text-davy-gray/60 text-sm mt-2">
+                  Esta herramienta aún no está disponible en esta fase.
                 </p>
-                <div className="space-y-3">
-                  <input
-                    type="text"
-                    value={angTema}
-                    onChange={(e) => setAngTema(e.target.value)}
-                    placeholder="Tema o pregunta a investigar…"
-                    className="w-full bg-oxford-blue border border-davy-gray/30 rounded px-4 py-2
-                               text-seasalt placeholder:text-davy-gray/50 focus:outline-none
-                               focus:border-amber-brand/50 text-sm"
-                  />
-                  <div className="grid grid-cols-2 gap-3">
-                    <input
-                      type="text"
-                      value={angAudiencia}
-                      onChange={(e) => setAngAudiencia(e.target.value)}
-                      placeholder="Audiencia objetivo (opcional)"
-                      className="bg-oxford-blue border border-davy-gray/30 rounded px-4 py-2
-                                 text-seasalt placeholder:text-davy-gray/50 focus:outline-none
-                                 focus:border-amber-brand/50 text-sm"
-                    />
-                    <input
-                      type="text"
-                      value={angDato}
-                      onChange={(e) => setAngDato(e.target.value)}
-                      placeholder="Dato clave de contexto (opcional)"
-                      className="bg-oxford-blue border border-davy-gray/30 rounded px-4 py-2
-                                 text-seasalt placeholder:text-davy-gray/50 focus:outline-none
-                                 focus:border-amber-brand/50 text-sm"
-                    />
+              </div>
+            )}
+
+            {/* ── Info (draft, aprobado) ── */}
+            {phaseConfig.tabs.length === 0 && phaseConfig.info && (
+              <div className="text-center py-10">
+                {project.status === 'aprobado' ? (
+                  <>
+                    <div className="text-5xl mb-3">✓</div>
+                    <p className="text-green-400 text-lg mb-4">{phaseConfig.info}</p>
+                    <button
+                      disabled
+                      className="px-6 py-2 bg-amber-brand/20 border border-amber-brand/40 text-amber-brand rounded opacity-50 cursor-not-allowed"
+                      title="Exportador — fase futura"
+                    >
+                      📤 Exportar (próximamente)
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <div className="text-5xl mb-3">📝</div>
+                    <p className="text-davy-gray">{phaseConfig.info}</p>
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* ── TAB: Generador de Hipótesis (fase validacion) ── */}
+            {activeTool === 'hipotesis' &&
+              phaseConfig.tabs.some((t) => t.key === 'hipotesis') && (
+                <div>
+                  {/* Disclaimer permanente anti-fabricación */}
+                  <div className="bg-amber-brand/15 border border-amber-brand/40 rounded-lg p-4 mb-5 flex gap-3">
+                    <span className="text-amber-brand text-xl flex-shrink-0">⚠️</span>
+                    <div>
+                      <p className="text-amber-brand font-semibold text-sm mb-1">
+                        Todas las hipótesis requieren verificación antes de cualquier publicación
+                      </p>
+                      <p className="text-amber-brand/80 text-xs leading-relaxed">
+                        Los hechos mencionados son sugerencias a investigar, no datos
+                        confirmados. La IA puede equivocarse o fabricar detalles específicos.
+                        La pesquisa en terreno es obligatoria antes de cualquier afirmación
+                        pública.
+                      </p>
+                    </div>
                   </div>
-                  <button
-                    onClick={handleGenerateAngulos}
-                    disabled={!angTema.trim() || generating}
-                    className="w-full py-2.5 bg-amber-brand text-oxford-blue rounded font-medium text-sm
-                               hover:bg-amber-brand/90 transition-colors
-                               disabled:opacity-40 disabled:cursor-not-allowed"
-                  >
-                    {generating ? 'Generando ángulos…' : '⚡ Generar Ángulos'}
-                  </button>
-                </div>
-                {genError && <p className="text-red-400 text-sm mt-3">{genError}</p>}
-              </div>
-            )}
 
-            {/* ── TAB: Validador de Tono ── */}
-            {activeTool === 'validador' && (
-              <div>
-                <p className="text-davy-gray text-sm mb-4">
-                  Pegá un texto (borrador, lead, párrafo) y evaluá su tono editorial, sesgo, precisión y claridad.
-                </p>
-                <div className="space-y-3">
-                  <textarea
-                    value={tonoTexto}
-                    onChange={(e) => setTonoTexto(e.target.value)}
-                    placeholder="Pegá acá el texto a evaluar…"
-                    rows={5}
-                    maxLength={10000}
-                    className="w-full bg-oxford-blue border border-davy-gray/30 rounded px-4 py-2
-                               text-seasalt placeholder:text-davy-gray/50 focus:outline-none
-                               focus:border-amber-brand/50 text-sm resize-y"
-                  />
-                  <button
-                    onClick={handleValidarTono}
-                    disabled={!tonoTexto.trim() || validando}
-                    className="w-full py-2.5 bg-amber-brand text-oxford-blue rounded font-medium text-sm
-                               hover:bg-amber-brand/90 transition-colors
-                               disabled:opacity-40 disabled:cursor-not-allowed"
-                  >
-                    {validando ? 'Analizando tono…' : '✅ Validar Tono'}
-                  </button>
-                </div>
-                {tonoError && <p className="text-red-400 text-sm mt-3">{tonoError}</p>}
-              </div>
-            )}
+                  <p className="text-davy-gray text-sm mb-4">
+                    Generá 3 a 5 hipótesis de investigación periodística sobre tu tema. Cada
+                    hipótesis incluye verificaciones críticas y evidencia requerida para guiar la
+                    pesquisa.
+                  </p>
 
-            {/* ── TAB: Constructor de Pitch ── */}
-            {activeTool === 'pitch' && (
+                  <div className="space-y-3">
+                    <input
+                      type="text"
+                      value={hipTema}
+                      onChange={(e) => setHipTema(e.target.value)}
+                      placeholder="Tema o pregunta a investigar…"
+                      className="w-full bg-oxford-blue border border-davy-gray/30 rounded px-4 py-2
+                                 text-seasalt placeholder:text-davy-gray/50 focus:outline-none
+                                 focus:border-amber-brand/50 text-sm"
+                    />
+                    <div className="grid grid-cols-2 gap-3">
+                      <input
+                        type="text"
+                        value={hipAudiencia}
+                        onChange={(e) => setHipAudiencia(e.target.value)}
+                        placeholder="Audiencia objetivo (opcional)"
+                        className="bg-oxford-blue border border-davy-gray/30 rounded px-4 py-2
+                                   text-seasalt placeholder:text-davy-gray/50 focus:outline-none
+                                   focus:border-amber-brand/50 text-sm"
+                      />
+                      <input
+                        type="text"
+                        value={hipDato}
+                        onChange={(e) => setHipDato(e.target.value)}
+                        placeholder="Dato clave de contexto (opcional)"
+                        className="bg-oxford-blue border border-davy-gray/30 rounded px-4 py-2
+                                   text-seasalt placeholder:text-davy-gray/50 focus:outline-none
+                                   focus:border-amber-brand/50 text-sm"
+                      />
+                    </div>
+                    <button
+                      onClick={handleGenerateHipotesis}
+                      disabled={!hipTema.trim() || generandoHip}
+                      className="w-full py-2.5 bg-amber-brand text-oxford-blue rounded font-medium text-sm
+                                 hover:bg-amber-brand/90 transition-colors
+                                 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      {generandoHip ? 'Generando hipótesis…' : '🔬 Generar Hipótesis'}
+                    </button>
+                  </div>
+                  {hipError && <p className="text-red-400 text-sm mt-3">{hipError}</p>}
+                </div>
+              )}
+
+            {/* ── TAB: Constructor de Pitch (fase pesquisa) ── */}
+            {activeTool === 'pitch' && phaseConfig.tabs.some((t) => t.key === 'pitch') && (
               <div>
+                {savedHipotesisElegida && (
+                  <div className="bg-blue-500/10 border border-blue-500/30 rounded p-3 mb-4 text-xs text-blue-400">
+                    💡 Prellenado desde hipótesis elegida. Podés editar el campo libremente.
+                  </div>
+                )}
                 <p className="text-davy-gray text-sm mb-4">
                   Construí un pitch editorial listo para enviar a editores de medios.
                 </p>
@@ -954,7 +1628,10 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
                   <input
                     type="text"
                     value={pitchAngulo}
-                    onChange={(e) => setPitchAngulo(e.target.value)}
+                    onChange={(e) => {
+                      setPitchAngulo(e.target.value);
+                      setPitchTouched(true);
+                    }}
                     placeholder="Título o descripción del ángulo para el pitch…"
                     className="w-full bg-oxford-blue border border-davy-gray/30 rounded px-4 py-2
                                text-seasalt placeholder:text-davy-gray/50 focus:outline-none
@@ -982,24 +1659,160 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
                 {pitchError && <p className="text-red-400 text-sm mt-3">{pitchError}</p>}
               </div>
             )}
+
+            {/* ── TAB: Radar Editorial (fase pesquisa) ── */}
+            {activeTool === 'radar' && phaseConfig.tabs.some((t) => t.key === 'radar') && (
+              <div>
+                <p className="text-davy-gray text-sm mb-4">
+                  Auditá cobertura existente sobre tu tema. Detectá sesgos, falta de rigor y
+                  oportunidades editoriales en textos de la competencia.
+                </p>
+                <div className="space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <input
+                      type="text"
+                      value={radarMedio}
+                      onChange={(e) => setRadarMedio(e.target.value)}
+                      placeholder="Medio (obligatorio) — ej: La Tercera"
+                      className="bg-oxford-blue border border-davy-gray/30 rounded px-4 py-2
+                                 text-seasalt placeholder:text-davy-gray/50 focus:outline-none
+                                 focus:border-amber-brand/50 text-sm"
+                    />
+                    <input
+                      type="text"
+                      value={radarUrl}
+                      onChange={(e) => setRadarUrl(e.target.value)}
+                      placeholder="URL (opcional)"
+                      className="bg-oxford-blue border border-davy-gray/30 rounded px-4 py-2
+                                 text-seasalt placeholder:text-davy-gray/50 focus:outline-none
+                                 focus:border-amber-brand/50 text-sm"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <input
+                      type="date"
+                      value={radarFecha}
+                      onChange={(e) => setRadarFecha(e.target.value)}
+                      className="bg-oxford-blue border border-davy-gray/30 rounded px-4 py-2
+                                 text-seasalt placeholder:text-davy-gray/50 focus:outline-none
+                                 focus:border-amber-brand/50 text-sm"
+                    />
+                    <input
+                      type="text"
+                      value={radarNotas}
+                      onChange={(e) => setRadarNotas(e.target.value)}
+                      placeholder="Notas propias (opcional)"
+                      className="bg-oxford-blue border border-davy-gray/30 rounded px-4 py-2
+                                 text-seasalt placeholder:text-davy-gray/50 focus:outline-none
+                                 focus:border-amber-brand/50 text-sm"
+                    />
+                  </div>
+                  <textarea
+                    value={radarTexto}
+                    onChange={(e) => setRadarTexto(e.target.value)}
+                    placeholder="Pegá el texto del medio a auditar…"
+                    rows={6}
+                    maxLength={10000}
+                    className="w-full bg-oxford-blue border border-davy-gray/30 rounded px-4 py-2
+                               text-seasalt placeholder:text-davy-gray/50 focus:outline-none
+                               focus:border-amber-brand/50 text-sm resize-y"
+                  />
+                  <button
+                    onClick={handleAuditarRadar}
+                    disabled={!radarMedio.trim() || !radarTexto.trim() || auditandoRadar}
+                    className="w-full py-2.5 bg-amber-brand text-oxford-blue rounded font-medium text-sm
+                               hover:bg-amber-brand/90 transition-colors
+                               disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {auditandoRadar ? 'Auditando…' : '📡 Auditar Cobertura'}
+                  </button>
+                </div>
+                {radarError && <p className="text-red-400 text-sm mt-3">{radarError}</p>}
+              </div>
+            )}
+
+            {/* ── TAB: Validador de Tono del Borrador (fase revision) ── */}
+            {activeTool === 'validador' &&
+              phaseConfig.tabs.some((t) => t.key === 'validador') && (
+                <div>
+                  <p className="text-davy-gray text-sm mb-4">
+                    Validá el tono, sesgo, precisión, claridad y ética periodística de tu
+                    borrador antes de exportar. Cada análisis queda guardado en el historial de
+                    iteraciones.
+                  </p>
+                  <div className="space-y-3">
+                    <textarea
+                      value={borradorTexto}
+                      onChange={(e) => setBorradorTexto(e.target.value)}
+                      placeholder="Pegá acá el texto del borrador a validar…"
+                      rows={8}
+                      maxLength={10000}
+                      className="w-full bg-oxford-blue border border-davy-gray/30 rounded px-4 py-2
+                                 text-seasalt placeholder:text-davy-gray/50 focus:outline-none
+                                 focus:border-amber-brand/50 text-sm resize-y"
+                    />
+                    <button
+                      onClick={handleValidarBorrador}
+                      disabled={!borradorTexto.trim() || validandoBorrador}
+                      className="w-full py-2.5 bg-amber-brand text-oxford-blue rounded font-medium text-sm
+                                 hover:bg-amber-brand/90 transition-colors
+                                 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      {validandoBorrador ? 'Analizando borrador…' : '✅ Validar Borrador'}
+                    </button>
+                  </div>
+                  {borradorError && <p className="text-red-400 text-sm mt-3">{borradorError}</p>}
+                </div>
+              )}
           </div>
         </section>
 
-        {/* ── Ángulos Guardados ── */}
-        {savedAngulos && savedAngulos.angulos.length > 0 && (
+        {/* ── Hipótesis Elegida (destacada) ── */}
+        {savedHipotesisElegida && (
+          <section className="bg-space-cadet rounded-lg border-2 border-amber-brand/60 p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <span className="text-2xl">⭐</span>
+                <h2 className="text-amber-brand font-semibold">
+                  Hipótesis elegida para investigación
+                </h2>
+              </div>
+              <button
+                onClick={handleCambiarEleccion}
+                className="text-xs text-davy-gray hover:text-seasalt underline"
+              >
+                Cambiar elección
+              </button>
+            </div>
+            {renderHipotesisCard(savedHipotesisElegida, -1, true)}
+            {savedHipotesisElegida.elegidaEn && (
+              <p className="text-xs text-davy-gray mt-3">
+                Elegida:{' '}
+                {new Date(savedHipotesisElegida.elegidaEn).toLocaleString('es-CL')}
+              </p>
+            )}
+          </section>
+        )}
+
+        {/* ── Hipótesis Generadas (nuevo, Chunk 6) ── */}
+        {savedHipotesis && savedHipotesis.hipotesis.length > 0 && (
           <section className="bg-space-cadet rounded-lg border border-davy-gray/20 p-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-seasalt font-semibold">
-                Ángulos Generados ({savedAngulos.angulos.length})
+                🔬 Hipótesis Generadas ({savedHipotesis.hipotesis.length})
               </h2>
               <div className="text-right">
                 <p className="text-davy-gray text-xs">
-                  Tema: <span className="text-seasalt">{savedAngulos.tema}</span>
+                  Tema: <span className="text-seasalt">{savedHipotesis.tema}</span>
                 </p>
-                {savedAngulos.generadoEn && (
+                {savedHipotesis.generadoEn && (
                   <p className="text-davy-gray text-xs">
-                    {new Date(savedAngulos.generadoEn).toLocaleDateString('es-CL', {
-                      day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+                    {new Date(savedHipotesis.generadoEn).toLocaleDateString('es-CL', {
+                      day: '2-digit',
+                      month: 'short',
+                      year: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
                     })}
                   </p>
                 )}
@@ -1007,128 +1820,66 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
             </div>
 
             <div className="space-y-3">
-              {savedAngulos.angulos.map((angulo, idx) => (
-                <div key={idx} className="bg-oxford-blue rounded-lg border border-davy-gray/15 p-4">
-                  <div className="flex items-start justify-between mb-2">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-xs">{TIPO_LABELS[angulo.tipo] ?? angulo.tipo}</span>
-                      <h3 className="text-seasalt font-medium text-sm">
-                        {angulo.numero}. {angulo.titulo}
-                      </h3>
-                    </div>
-                    {angulo.verificacion && (
-                      <span className={`px-2 py-0.5 rounded text-xs font-medium border whitespace-nowrap ${
-                        VERIFICACION_COLORS[angulo.verificacion] ?? 'bg-davy-gray/20 text-davy-gray border-davy-gray/40'
-                      }`}>
-                        {angulo.verificacion.replace(/_/g, ' ')}
-                      </span>
-                    )}
-                  </div>
-
-                  <p className="text-davy-gray text-sm mb-2">
-                    <span className="text-amber-brand/80">Gancho:</span> {angulo.gancho}
-                  </p>
-
-                  {angulo.pregunta_clave && (
-                    <p className="text-davy-gray text-sm mb-2">
-                      <span className="text-blue-400/80">Pregunta clave:</span> {angulo.pregunta_clave}
-                    </p>
-                  )}
-
-                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-davy-gray mb-2">
-                    <span>👥 <span className="text-seasalt/70">{angulo.audiencia}</span></span>
-                    <span>🎭 <span className="text-seasalt/70">{angulo.tono}</span></span>
-                    <span>⚠️ <span className="text-seasalt/70">{angulo.riesgo}</span></span>
-                  </div>
-
-                  {angulo.lentes.length > 0 && (
-                    <div className="flex gap-1.5 mb-2 flex-wrap">
-                      {angulo.lentes.map((lente, li) => (
-                        <span key={li} className="px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 text-xs border border-blue-500/20">
-                          {lente.replace(/_/g, ' ')}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-
-                  {angulo.fuentes.length > 0 && (
-                    <div className="mt-2 text-xs text-davy-gray">
-                      📚 Fuentes:{' '}
-                      {angulo.fuentes.map((f, fi) => (
-                        <span key={fi}>
-                          {typeof f === 'object' && f
-                            ? `${(f as Record<string, string>).cargo}, ${(f as Record<string, string>).institucion} (${(f as Record<string, string>).pais})`
-                            : String(f)
-                          }
-                          {fi < angulo.fuentes.length - 1 ? ' · ' : ''}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
+              {savedHipotesis.hipotesis.map((h, idx) => (
+                <div key={idx}>{renderHipotesisCard(h, idx, false)}</div>
               ))}
             </div>
 
-            {savedAngulos.notaEditorial && (
+            {savedHipotesis.notaEditorial && (
               <div className="mt-4 pt-4 border-t border-davy-gray/20">
-                <p className="text-davy-gray text-xs uppercase tracking-wider mb-1">Nota Editorial</p>
-                <p className="text-seasalt/80 text-sm">{savedAngulos.notaEditorial}</p>
+                <p className="text-davy-gray text-xs uppercase tracking-wider mb-1">
+                  Nota Editorial
+                </p>
+                <p className="text-seasalt/80 text-sm">{savedHipotesis.notaEditorial}</p>
               </div>
             )}
           </section>
         )}
 
-        {/* ── Validación de Tono Guardada ── */}
-        {savedValidacion && (
+        {/* ── Ángulos Legacy (retrocompat — solo lectura) ── */}
+        {savedAngulosLegacy && savedAngulosLegacy.angulos.length > 0 && (
           <section className="bg-space-cadet rounded-lg border border-davy-gray/20 p-6">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-seasalt font-semibold">Validación de Tono</h2>
-              <div className="flex items-center gap-3">
-                <span className={`font-bold text-lg ${
-                  VEREDICTO_LABELS[savedValidacion.veredicto]?.color ?? 'text-davy-gray'
-                }`}>
-                  {savedValidacion.puntuacion_global.toFixed(1)}/5
-                </span>
-                <span className={`text-sm ${VEREDICTO_LABELS[savedValidacion.veredicto]?.color ?? 'text-davy-gray'}`}>
-                  {VEREDICTO_LABELS[savedValidacion.veredicto]?.label ?? savedValidacion.veredicto}
-                </span>
+              <div>
+                <h2 className="text-seasalt font-semibold">
+                  Ángulos Generados (legacy)
+                </h2>
+                <p className="text-davy-gray/70 text-xs mt-1">
+                  Generados antes de Chunk 6. Solo lectura.
+                </p>
+              </div>
+              <div className="text-right">
+                <p className="text-davy-gray text-xs">
+                  Tema: <span className="text-seasalt">{savedAngulosLegacy.tema}</span>
+                </p>
+                {savedAngulosLegacy.generadoEn && (
+                  <p className="text-davy-gray text-xs">
+                    {new Date(savedAngulosLegacy.generadoEn).toLocaleDateString('es-CL', {
+                      day: '2-digit',
+                      month: 'short',
+                      year: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                  </p>
+                )}
               </div>
             </div>
 
-            <p className="text-seasalt/80 text-sm mb-4">{savedValidacion.resumen}</p>
-
             <div className="space-y-3">
-              {savedValidacion.evaluacion.map((dim, di) => (
-                <div key={di} className="bg-oxford-blue rounded-lg border border-davy-gray/15 p-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <h4 className="text-seasalt text-sm font-medium capitalize">
-                      {dim.dimension.replace(/_/g, ' ')}
-                    </h4>
-                    <div className="flex gap-0.5">
-                      {[1, 2, 3, 4, 5].map((n) => (
-                        <span key={n} className={`w-5 h-2 rounded-full ${
-                          n <= dim.puntuacion ? 'bg-amber-brand' : 'bg-davy-gray/20'
-                        }`} />
-                      ))}
-                    </div>
-                  </div>
-                  {dim.hallazgos.length > 0 && (
-                    <div className="mb-2">
-                      {dim.hallazgos.map((h, hi) => (
-                        <p key={hi} className="text-red-400/80 text-xs mb-0.5">⚠ {h}</p>
-                      ))}
-                    </div>
-                  )}
-                  {dim.sugerencias.length > 0 && (
-                    <div>
-                      {dim.sugerencias.map((s, si) => (
-                        <p key={si} className="text-green-400/80 text-xs mb-0.5">→ {s}</p>
-                      ))}
-                    </div>
-                  )}
-                </div>
+              {savedAngulosLegacy.angulos.map((a, idx) => (
+                <div key={idx}>{renderHipotesisCard(a, idx, true)}</div>
               ))}
             </div>
+
+            {savedAngulosLegacy.notaEditorial && (
+              <div className="mt-4 pt-4 border-t border-davy-gray/20">
+                <p className="text-davy-gray text-xs uppercase tracking-wider mb-1">
+                  Nota Editorial
+                </p>
+                <p className="text-seasalt/80 text-sm">{savedAngulosLegacy.notaEditorial}</p>
+              </div>
+            )}
           </section>
         )}
 
@@ -1136,7 +1887,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
         {savedPitch && (
           <section className="bg-space-cadet rounded-lg border border-davy-gray/20 p-6">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-seasalt font-semibold">Pitch Editorial</h2>
+              <h2 className="text-seasalt font-semibold">📨 Pitch Editorial</h2>
               <p className="text-davy-gray text-xs">
                 Medio: <span className="text-seasalt">{savedPitch.medio_destino}</span>
               </p>
@@ -1150,10 +1901,200 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
 
             {savedPitch.notas_estrategicas && (
               <div className="mt-4 pt-4 border-t border-davy-gray/20">
-                <p className="text-davy-gray text-xs uppercase tracking-wider mb-1">Notas Estratégicas</p>
+                <p className="text-davy-gray text-xs uppercase tracking-wider mb-1">
+                  Notas Estratégicas
+                </p>
                 <p className="text-seasalt/80 text-sm">{savedPitch.notas_estrategicas}</p>
               </div>
             )}
+          </section>
+        )}
+
+        {/* ── Radar Editorial histórico ── */}
+        {savedRadar.length > 0 && (
+          <section className="bg-space-cadet rounded-lg border border-davy-gray/20 p-6">
+            <h2 className="text-seasalt font-semibold mb-4">
+              📡 Radar Editorial ({savedRadar.length})
+            </h2>
+            <div className="space-y-3">
+              {savedRadar.map((entry) => (
+                <div
+                  key={entry.id}
+                  className="bg-oxford-blue rounded-lg border border-davy-gray/15 overflow-hidden"
+                >
+                  <button
+                    onClick={() =>
+                      setExpandedRadar(expandedRadar === entry.id ? null : entry.id)
+                    }
+                    className="w-full p-4 text-left hover:bg-davy-gray/5 transition-colors"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                          <span className="text-seasalt font-medium text-sm">{entry.medio}</span>
+                          {entry.fecha_publicacion && (
+                            <span className="text-xs text-davy-gray">
+                              · {entry.fecha_publicacion}
+                            </span>
+                          )}
+                        </div>
+                        {entry.url && (
+                          <p className="text-xs text-davy-gray truncate">{entry.url}</p>
+                        )}
+                        {entry.notas_propias && (
+                          <p className="text-xs text-davy-gray/80 italic truncate">
+                            {entry.notas_propias}
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-3 flex-shrink-0">
+                        <span
+                          className={`font-bold ${
+                            VEREDICTO_LABELS[entry.veredicto]?.color ?? 'text-davy-gray'
+                          }`}
+                        >
+                          {entry.puntuacion_global.toFixed(1)}/5
+                        </span>
+                        <span
+                          className={`text-xs ${
+                            VEREDICTO_LABELS[entry.veredicto]?.color ?? 'text-davy-gray'
+                          }`}
+                        >
+                          {VEREDICTO_LABELS[entry.veredicto]?.label ?? entry.veredicto}
+                        </span>
+                        <span className="text-davy-gray text-xs">
+                          {expandedRadar === entry.id ? '▾' : '▸'}
+                        </span>
+                      </div>
+                    </div>
+                  </button>
+                  {expandedRadar === entry.id && (
+                    <div className="px-4 pb-4 border-t border-davy-gray/15 pt-3">
+                      {entry.resumen && (
+                        <p className="text-seasalt/80 text-sm mb-3">{entry.resumen}</p>
+                      )}
+                      {entry.texto_analizado && (
+                        <div className="bg-space-cadet border-l-2 border-davy-gray/30 pl-3 py-1 mb-3 text-xs text-davy-gray/80 italic">
+                          «{entry.texto_analizado}…»
+                        </div>
+                      )}
+                      {renderDimensions(entry.evaluacion)}
+                      {entry.auditado_en && (
+                        <p className="text-xs text-davy-gray mt-3">
+                          Auditado: {new Date(entry.auditado_en).toLocaleString('es-CL')}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* ── Validaciones de Borrador histórico (fase revision) ── */}
+        {savedValidacionesBorrador.length > 0 && (
+          <section className="bg-space-cadet rounded-lg border border-davy-gray/20 p-6">
+            <h2 className="text-seasalt font-semibold mb-4">
+              ✅ Validaciones del Borrador ({savedValidacionesBorrador.length})
+            </h2>
+            <div className="space-y-3">
+              {savedValidacionesBorrador.map((entry, idx) => (
+                <div
+                  key={entry.id}
+                  className="bg-oxford-blue rounded-lg border border-davy-gray/15 overflow-hidden"
+                >
+                  <button
+                    onClick={() =>
+                      setExpandedBorrador(expandedBorrador === entry.id ? null : entry.id)
+                    }
+                    className="w-full p-4 text-left hover:bg-davy-gray/5 transition-colors"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-seasalt text-sm">
+                          Iteración #{idx + 1}
+                          {entry.validado_en && (
+                            <span className="text-davy-gray text-xs ml-2">
+                              · {new Date(entry.validado_en).toLocaleString('es-CL')}
+                            </span>
+                          )}
+                        </p>
+                        {entry.texto_analizado && (
+                          <p className="text-xs text-davy-gray/80 italic truncate mt-1">
+                            «{entry.texto_analizado}…»
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-3 flex-shrink-0">
+                        <span
+                          className={`font-bold ${
+                            VEREDICTO_LABELS[entry.veredicto]?.color ?? 'text-davy-gray'
+                          }`}
+                        >
+                          {entry.puntuacion_global.toFixed(1)}/5
+                        </span>
+                        <span
+                          className={`text-xs ${
+                            VEREDICTO_LABELS[entry.veredicto]?.color ?? 'text-davy-gray'
+                          }`}
+                        >
+                          {VEREDICTO_LABELS[entry.veredicto]?.label ?? entry.veredicto}
+                        </span>
+                        <span className="text-davy-gray text-xs">
+                          {expandedBorrador === entry.id ? '▾' : '▸'}
+                        </span>
+                      </div>
+                    </div>
+                  </button>
+                  {expandedBorrador === entry.id && (
+                    <div className="px-4 pb-4 border-t border-davy-gray/15 pt-3">
+                      {entry.resumen && (
+                        <p className="text-seasalt/80 text-sm mb-3">{entry.resumen}</p>
+                      )}
+                      {renderDimensions(entry.evaluacion)}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* ── Validación de Tono legacy (retrocompat — solo lectura) ── */}
+        {savedValidacionLegacy && (
+          <section className="bg-space-cadet rounded-lg border border-davy-gray/20 p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-seasalt font-semibold">Validación de Tono (legacy)</h2>
+                <p className="text-davy-gray/70 text-xs mt-1">
+                  Generada antes de Chunk 6. Solo lectura.
+                </p>
+              </div>
+              <div className="flex items-center gap-3">
+                <span
+                  className={`font-bold text-lg ${
+                    VEREDICTO_LABELS[savedValidacionLegacy.veredicto]?.color ?? 'text-davy-gray'
+                  }`}
+                >
+                  {savedValidacionLegacy.puntuacion_global.toFixed(1)}/5
+                </span>
+                <span
+                  className={`text-sm ${
+                    VEREDICTO_LABELS[savedValidacionLegacy.veredicto]?.color ?? 'text-davy-gray'
+                  }`}
+                >
+                  {VEREDICTO_LABELS[savedValidacionLegacy.veredicto]?.label ??
+                    savedValidacionLegacy.veredicto}
+                </span>
+              </div>
+            </div>
+
+            {savedValidacionLegacy.resumen && (
+              <p className="text-seasalt/80 text-sm mb-4">{savedValidacionLegacy.resumen}</p>
+            )}
+
+            {renderDimensions(savedValidacionLegacy.evaluacion)}
           </section>
         )}
       </div>

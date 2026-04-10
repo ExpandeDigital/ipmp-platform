@@ -37,5 +37,8 @@ next-env.d.ts
 .idea
 .vscode
 
+# Claude Code (config local del harness, no commitear)
+.claude/
+
 # Drizzle metadata (las migrations sí se commitean si las generamos)
 drizzle/meta
