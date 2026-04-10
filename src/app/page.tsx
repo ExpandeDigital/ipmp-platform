@@ -1,18 +1,15 @@
 /**
- * IP+MP Platform — Homepage
+ * IP+MP Platform — Dashboard del Operador
  *
- * Esta página es el "tablero de cimientos vivos" de la Fase 0.
- * Muestra el estado del sistema, conexión a base de datos,
- * tenants registrados y plantillas disponibles.
- *
- * En fases posteriores, esta página será reemplazada por el
- * dashboard del operador. Por ahora cumple la función de health-check
- * visual y de validación del primer deploy.
+ * Vista principal con estado del sistema y acceso a herramientas.
+ * Evoluciona desde el "tablero de cimientos vivos" de Fase 0.
  */
 
+import Link from 'next/link';
+import Nav from '@/components/Nav';
 import { db } from '@/db';
-import { tenants, templates } from '@/db/schema';
-import { count } from 'drizzle-orm';
+import { tenants, templates, projects, consumptionLogs } from '@/db/schema';
+import { count, sum } from 'drizzle-orm';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,10 +20,22 @@ async function getSystemStatus() {
   try {
     const [tenantsResult] = await db.select({ count: count() }).from(tenants);
     const [templatesResult] = await db.select({ count: count() }).from(templates);
+    const [projectsResult] = await db.select({ count: count() }).from(projects);
+    const [usageResult] = await db
+      .select({
+        calls: count(),
+        totalInput: sum(consumptionLogs.inputTokens),
+        totalOutput: sum(consumptionLogs.outputTokens),
+      })
+      .from(consumptionLogs);
+
     return {
       dbStatus: 'ok' as const,
       tenantCount: Number(tenantsResult.count),
       templateCount: Number(templatesResult.count),
+      projectCount: Number(projectsResult.count),
+      apiCalls: Number(usageResult.calls),
+      totalTokens: Number(usageResult.totalInput ?? 0) + Number(usageResult.totalOutput ?? 0),
       error: null,
     };
   } catch (error) {
@@ -34,140 +43,163 @@ async function getSystemStatus() {
       dbStatus: 'error' as const,
       tenantCount: 0,
       templateCount: 0,
+      projectCount: 0,
+      apiCalls: 0,
+      totalTokens: 0,
       error: error instanceof Error ? error.message : String(error),
     };
   }
 }
 
 export default async function HomePage() {
-  const { dbStatus, tenantCount, templateCount, error } = await getSystemStatus();
-  const tablesExist = !error || !error.includes('does not exist');
-  const needsInit = dbStatus === 'ok' && (tenantCount === 0 || templateCount === 0);
+  const status = await getSystemStatus();
 
   return (
-    <main className="min-h-screen bg-oxford-blue text-seasalt p-8">
-      <div className="max-w-4xl mx-auto">
-        {/* Header */}
-        <header className="mb-12 border-b border-davy-gray pb-8">
-          <p className="text-amber-brand font-mono text-sm mb-2">
-            PLATAFORMA IP+MP · v0.1.0 · FASE 0 — CIMIENTOS
-          </p>
-          <h1 className="text-5xl font-bold mb-3 tracking-tight">Cimientos vivos</h1>
-          <p className="text-davy-gray text-lg max-w-2xl">
-            Pipeline de investigación periodística y producción de contenido medible.
-            <br />
-            Expande Digital Consultores SpA · Sociedad de Inversiones Dreamoms SpA
-          </p>
-        </header>
+    <>
+      <Nav current="dashboard" />
+      <main className="min-h-screen bg-oxford-blue text-seasalt">
+        <div className="max-w-5xl mx-auto px-6 py-8">
+          {/* Header */}
+          <header className="mb-10">
+            <p className="text-amber-brand font-mono text-xs mb-2 uppercase tracking-wider">
+              IP+MP Platform · v0.2.0 · FASE 1
+            </p>
+            <h1 className="text-4xl font-bold mb-2 tracking-tight">Dashboard del Operador</h1>
+            <p className="text-davy-gray text-sm max-w-2xl">
+              Pipeline de investigación periodística y producción de contenido medible.
+              Expande Digital Consultores SpA.
+            </p>
+          </header>
 
-        {/* System Status */}
-        <section className="space-y-6">
-          <h2 className="text-2xl font-bold mb-4">Estado del sistema</h2>
-
-          {/* Database connection */}
-          <div className="bg-space-cadet rounded-lg p-6 border border-davy-gray/30">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="font-mono text-sm text-davy-gray uppercase tracking-wider mb-1">
-                  Conexión Postgres (Railway)
-                </p>
-                <p className="text-lg">
-                  {dbStatus === 'ok' ? 'Operativa' : 'Caída'}
+          {/* Estado del sistema */}
+          <section className="mb-10">
+            <h2 className="text-xs font-mono text-davy-gray uppercase tracking-wider mb-4">
+              Estado del Sistema
+            </h2>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="bg-space-cadet rounded-lg p-4 border border-davy-gray/30">
+                <p className="text-davy-gray text-xs font-mono mb-1">Postgres</p>
+                <p className="text-lg font-bold">
+                  {status.dbStatus === 'ok' ? (
+                    <span className="text-green-400">Operativa</span>
+                  ) : (
+                    <span className="text-red-400">Caída</span>
+                  )}
                 </p>
               </div>
-              <span
-                className={`text-2xl ${
-                  dbStatus === 'ok' ? 'text-green-400' : 'text-red-400'
-                }`}
-              >
-                ●
-              </span>
+              <div className="bg-space-cadet rounded-lg p-4 border border-davy-gray/30">
+                <p className="text-davy-gray text-xs font-mono mb-1">Tenants</p>
+                <p className="text-lg font-bold text-amber-brand">
+                  {status.tenantCount}
+                  <span className="text-sm text-davy-gray ml-1">/ {EXPECTED_TENANTS}</span>
+                </p>
+              </div>
+              <div className="bg-space-cadet rounded-lg p-4 border border-davy-gray/30">
+                <p className="text-davy-gray text-xs font-mono mb-1">Plantillas</p>
+                <p className="text-lg font-bold text-amber-brand">
+                  {status.templateCount}
+                  <span className="text-sm text-davy-gray ml-1">/ {EXPECTED_TEMPLATES}</span>
+                </p>
+              </div>
+              <div className="bg-space-cadet rounded-lg p-4 border border-davy-gray/30">
+                <p className="text-davy-gray text-xs font-mono mb-1">Llamadas IA</p>
+                <p className="text-lg font-bold text-amber-brand">
+                  {status.apiCalls}
+                  {status.totalTokens > 0 && (
+                    <span className="text-sm text-davy-gray ml-1">
+                      · {(status.totalTokens / 1000).toFixed(1)}k tok
+                    </span>
+                  )}
+                </p>
+              </div>
             </div>
-            {error && (
-              <pre className="text-red-300 text-xs mt-4 overflow-x-auto bg-black/30 p-3 rounded border border-red-900/50">
-                {error}
+            {status.error && (
+              <pre className="text-red-300 text-xs mt-3 overflow-x-auto bg-red-900/20 p-3 rounded border border-red-900/50">
+                {status.error}
               </pre>
             )}
-          </div>
+          </section>
 
-          {/* Counters */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="bg-space-cadet rounded-lg p-6 border border-davy-gray/30">
-              <p className="text-davy-gray text-xs font-mono uppercase tracking-wider mb-3">
-                Tenants registrados
-              </p>
-              <p className="text-5xl font-bold text-amber-brand">
-                {tenantCount}
-                <span className="text-2xl text-davy-gray ml-2">/ {EXPECTED_TENANTS}</span>
-              </p>
-              <p className="text-xs text-davy-gray mt-3">
-                MetricPress, InvestigaPress, Dreamoms, Never Alone Again, De Cero a Cien,
-                Expande Digital, Código Maestro Soberano
-              </p>
-            </div>
-            <div className="bg-space-cadet rounded-lg p-6 border border-davy-gray/30">
-              <p className="text-davy-gray text-xs font-mono uppercase tracking-wider mb-3">
-                Plantillas disponibles
-              </p>
-              <p className="text-5xl font-bold text-amber-brand">
-                {templateCount}
-                <span className="text-2xl text-davy-gray ml-2">/ {EXPECTED_TEMPLATES}</span>
-              </p>
-              <p className="text-xs text-davy-gray mt-3">
-                Prensa (4) · Opinión (3) · Institucional (5) · Académico (1)
-              </p>
-            </div>
-          </div>
+          {/* Herramientas */}
+          <section className="mb-10">
+            <h2 className="text-xs font-mono text-davy-gray uppercase tracking-wider mb-4">
+              Herramientas de Producción
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Generador de Ángulos */}
+              <Link
+                href="/tools/angulos"
+                className="group bg-space-cadet rounded-lg p-6 border border-davy-gray/30 hover:border-amber-brand/50 transition-colors"
+              >
+                <div className="flex items-start justify-between mb-3">
+                  <span className="text-2xl">◇</span>
+                  <span className="text-xs font-mono text-green-400 bg-green-400/10 px-2 py-0.5 rounded">
+                    ACTIVA
+                  </span>
+                </div>
+                <h3 className="text-lg font-bold mb-1 group-hover:text-amber-brand transition-colors">
+                  Generador de Ángulos Noticiosos
+                </h3>
+                <p className="text-davy-gray text-sm">
+                  Genera 5-8 ángulos periodísticos por tema, con tier de medio,
+                  audiencia, tono y nivel de riesgo.
+                </p>
+              </Link>
 
-          {/* Init alert */}
-          {needsInit && tablesExist && (
-            <div className="bg-amber-brand/10 border border-amber-brand rounded-lg p-6">
-              <p className="font-bold text-amber-brand mb-2">
-                ⚠ Base de datos vacía
-              </p>
-              <p className="text-sm mb-3">
-                Las tablas existen pero no hay datos cargados. Tenés que correr el seed
-                inicial.
-              </p>
-              <code className="block bg-black/30 p-3 rounded text-amber-brand text-xs font-mono break-all">
-                POST /api/admin/init?token=TU_ADMIN_TOKEN
-              </code>
-            </div>
-          )}
+              {/* Placeholder: Validador de Tono */}
+              <div className="bg-space-cadet/50 rounded-lg p-6 border border-davy-gray/20 opacity-50">
+                <div className="flex items-start justify-between mb-3">
+                  <span className="text-2xl">◇</span>
+                  <span className="text-xs font-mono text-davy-gray bg-davy-gray/10 px-2 py-0.5 rounded">
+                    PRÓXIMA
+                  </span>
+                </div>
+                <h3 className="text-lg font-bold mb-1">Validador de Tono</h3>
+                <p className="text-davy-gray text-sm">
+                  Analiza un borrador y valida que el tono sea consistente con
+                  la marca del tenant.
+                </p>
+              </div>
 
-          {dbStatus === 'error' && (
-            <div className="bg-red-900/20 border border-red-700 rounded-lg p-6">
-              <p className="font-bold text-red-400 mb-2">⚠ Tablas no inicializadas</p>
-              <p className="text-sm mb-3">
-                La conexión a Postgres funciona pero las tablas no existen. Hacé el primer
-                init:
-              </p>
-              <code className="block bg-black/30 p-3 rounded text-red-300 text-xs font-mono break-all">
-                POST /api/admin/init?token=TU_ADMIN_TOKEN
-              </code>
-            </div>
-          )}
+              {/* Placeholder: Constructor de Pitch */}
+              <div className="bg-space-cadet/50 rounded-lg p-6 border border-davy-gray/20 opacity-50">
+                <div className="flex items-start justify-between mb-3">
+                  <span className="text-2xl">◇</span>
+                  <span className="text-xs font-mono text-davy-gray bg-davy-gray/10 px-2 py-0.5 rounded">
+                    PRÓXIMA
+                  </span>
+                </div>
+                <h3 className="text-lg font-bold mb-1">Constructor de Pitch</h3>
+                <p className="text-davy-gray text-sm">
+                  Genera emails de pitch personalizados por editor y medio
+                  objetivo.
+                </p>
+              </div>
 
-          {tenantCount === EXPECTED_TENANTS && templateCount === EXPECTED_TEMPLATES && (
-            <div className="bg-green-900/20 border border-green-700 rounded-lg p-6">
-              <p className="font-bold text-green-400 mb-1">✓ Cimientos completos</p>
-              <p className="text-sm">
-                Todos los tenants y plantillas están cargados. La Fase 0 está cerrada.
-                Listos para Fase 1.
-              </p>
+              {/* Placeholder: Analizador de Sentimiento */}
+              <div className="bg-space-cadet/50 rounded-lg p-6 border border-davy-gray/20 opacity-50">
+                <div className="flex items-start justify-between mb-3">
+                  <span className="text-2xl">◇</span>
+                  <span className="text-xs font-mono text-davy-gray bg-davy-gray/10 px-2 py-0.5 rounded">
+                    PRÓXIMA
+                  </span>
+                </div>
+                <h3 className="text-lg font-bold mb-1">Analizador de Sentimiento</h3>
+                <p className="text-davy-gray text-sm">
+                  Evalúa el sentimiento y la percepción pública de un texto o
+                  cobertura mediática.
+                </p>
+              </div>
             </div>
-          )}
-        </section>
+          </section>
 
-        {/* Footer */}
-        <footer className="mt-16 pt-8 border-t border-davy-gray text-davy-gray text-sm space-y-1">
-          <p>Operador Técnico AI-Augmented: Cristian Jofré Donoso</p>
-          <p className="font-mono text-xs">
-            Next.js {process.env.npm_package_dependencies_next || '15'} · Drizzle · Postgres
-            · Vercel · Railway
-          </p>
-        </footer>
-      </div>
-    </main>
+          {/* Footer */}
+          <footer className="pt-8 border-t border-davy-gray/30 text-davy-gray text-xs font-mono">
+            <p>Operador Técnico AI-Augmented: Cristian Jofré Donoso</p>
+            <p className="mt-1">Next.js · Drizzle · PostgreSQL · Vercel · Railway · Claude API</p>
+          </footer>
+        </div>
+      </main>
+    </>
   );
 }
