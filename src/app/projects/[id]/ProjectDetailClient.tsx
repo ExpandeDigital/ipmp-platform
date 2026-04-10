@@ -158,7 +158,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
           tenantSlug: project.tenantSlug,
           templateSlug: project.templateSlug,
           tool: 'generador_angulos',
-          input: { tema: tema.trim() },
+          userMessage: tema.trim(),
         }),
       });
       const genJson = await genRes.json();
