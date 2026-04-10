@@ -213,8 +213,38 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
     );
   }
 
-  // ── Datos de ángulos guardados ──
-  const savedAngulos = project.data?.angulos as AngulosData | undefined;
+  // ── Datos de ángulos guardados (parsing defensivo) ──
+  let savedAngulos: AngulosData | null = null;
+  try {
+    const raw = project.data?.angulos as Record<string, unknown> | undefined;
+    if (raw && typeof raw === 'object') {
+      const rawAngulos = raw.angulos ?? raw.angles ?? [];
+      const angulosList = Array.isArray(rawAngulos) ? rawAngulos : [];
+
+      savedAngulos = {
+        angulos: angulosList.map((a: Record<string, unknown>, idx: number) => ({
+          numero: Number(a.numero ?? a.number ?? idx + 1),
+          tier: String(a.tier ?? 'C'),
+          titulo: String(a.titulo ?? a.title ?? a.angulo ?? 'Sin título'),
+          gancho: String(a.gancho ?? a.hook ?? ''),
+          audiencia: String(a.audiencia ?? a.audience ?? ''),
+          tono: String(a.tono ?? a.tone ?? ''),
+          riesgo: String(a.riesgo ?? a.risk ?? ''),
+          fuentes: Array.isArray(a.fuentes) ? a.fuentes.map(String)
+            : Array.isArray(a.sources) ? a.sources.map(String)
+            : typeof a.fuentes === 'string' ? [a.fuentes]
+            : [],
+        })),
+        notaEditorial: String(raw.notaEditorial ?? raw.nota_editorial ?? raw.editorial_note ?? ''),
+        tema: String(raw.tema ?? raw.topic ?? ''),
+        generadoEn: String(raw.generadoEn ?? raw.generated_at ?? ''),
+      };
+
+      if (savedAngulos.angulos.length === 0) savedAngulos = null;
+    }
+  } catch {
+    savedAngulos = null;
+  }
 
   return (
     <main className="min-h-screen bg-oxford-blue p-8">
@@ -372,7 +402,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
         </section>
 
         {/* ── Ángulos Guardados ── */}
-        {savedAngulos && savedAngulos.angulos && savedAngulos.angulos.length > 0 && (
+        {savedAngulos && savedAngulos.angulos.length > 0 && (
           <section className="bg-space-cadet rounded-lg border border-davy-gray/20 p-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-seasalt font-semibold">
@@ -383,13 +413,15 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
                   Tema: <span className="text-seasalt">{savedAngulos.tema}</span>
                 </p>
                 <p className="text-davy-gray text-xs">
-                  {new Date(savedAngulos.generadoEn).toLocaleDateString('es-CL', {
-                    day: '2-digit',
-                    month: 'short',
-                    year: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  })}
+                  {savedAngulos.generadoEn
+                    ? new Date(savedAngulos.generadoEn).toLocaleDateString('es-CL', {
+                        day: '2-digit',
+                        month: 'short',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })
+                    : ''}
                 </p>
               </div>
             </div>
@@ -445,6 +477,19 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
                 <p className="text-seasalt/80 text-sm">{savedAngulos.notaEditorial}</p>
               </div>
             )}
+          </section>
+        )}
+
+        {/* Debug: si hay data pero no se parseó, mostrar raw */}
+        {!savedAngulos && project.data && Object.keys(project.data).length > 0 && (
+          <section className="bg-space-cadet rounded-lg border border-amber-brand/30 p-6">
+            <h2 className="text-amber-brand font-semibold mb-2">📋 Data del Project (raw)</h2>
+            <p className="text-davy-gray text-xs mb-3">
+              Hay datos guardados pero no se pudieron renderizar como ángulos. Acá está el contenido raw:
+            </p>
+            <pre className="text-seasalt/70 text-xs overflow-auto max-h-96 bg-oxford-blue rounded p-4">
+              {JSON.stringify(project.data, null, 2)}
+            </pre>
           </section>
         )}
       </div>
