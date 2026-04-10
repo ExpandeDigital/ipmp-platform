@@ -155,12 +155,60 @@ export async function POST(request: NextRequest) {
       temperature: 0.7,
     });
 
-    // 5. Intentar parsear como JSON
+    // 5. Intentar parsear como JSON (robusto: limpia markdown fences y texto extra)
     let parsed: unknown = result.text;
-    try {
-      parsed = JSON.parse(result.text);
-    } catch {
-      // Si no es JSON válido, devolver como texto plano
+    let parseError: string | null = null;
+    const rawText = result.text.trim();
+
+    const tryParse = (str: string): unknown | null => {
+      try {
+        return JSON.parse(str);
+      } catch {
+        return null;
+      }
+    };
+
+    // Intento 1: parse directo
+    let attempt = tryParse(rawText);
+
+    // Intento 2: quitar markdown fences ```json ... ``` o ``` ... ```
+    if (attempt === null) {
+      const fenceMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+      if (fenceMatch && fenceMatch[1]) {
+        attempt = tryParse(fenceMatch[1].trim());
+      }
+    }
+
+    // Intento 3: extraer primer bloque { ... } o [ ... ] completo
+    if (attempt === null) {
+      const firstBrace = rawText.search(/[{[]/);
+      if (firstBrace !== -1) {
+        // Buscar el cierre balanceado
+        const openChar = rawText[firstBrace];
+        const closeChar = openChar === '{' ? '}' : ']';
+        let depth = 0;
+        let endIdx = -1;
+        for (let i = firstBrace; i < rawText.length; i++) {
+          if (rawText[i] === openChar) depth++;
+          else if (rawText[i] === closeChar) {
+            depth--;
+            if (depth === 0) {
+              endIdx = i;
+              break;
+            }
+          }
+        }
+        if (endIdx !== -1) {
+          attempt = tryParse(rawText.slice(firstBrace, endIdx + 1));
+        }
+      }
+    }
+
+    if (attempt !== null) {
+      parsed = attempt;
+    } else {
+      parseError = 'No se pudo extraer JSON de la respuesta del modelo';
+      console.warn('[/api/ai/generate] JSON parse failed. Raw text:', rawText.slice(0, 500));
     }
 
     // 6. Loguear consumo (async, no bloquea la respuesta)
@@ -183,6 +231,8 @@ export async function POST(request: NextRequest) {
       tenant: resolvedTenantSlug,
       template: resolvedTemplateSlug,
       result: parsed,
+      rawText: parseError ? rawText.slice(0, 2000) : undefined,
+      parseError,
       usage: result.usage,
       model: result.model,
       durationMs: result.durationMs,
