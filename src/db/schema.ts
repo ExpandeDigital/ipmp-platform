@@ -1,0 +1,224 @@
+/**
+ * IP+MP Platform — Schema de base de datos
+ *
+ * Tablas:
+ *   tenants            → Las marcas/unidades del holding (Dreamoms, Expande, etc.)
+ *   users              → Usuarios del sistema (admin/operator/reviewer)
+ *   templates          → Las 13 plantillas de Project (Reportaje, Asesoría Legislativa, etc.)
+ *   projects           → La unidad de trabajo del pipeline IP+MP
+ *   assets             → Piezas visuales asociadas a un Project
+ *   revisions          → Log de revisiones de Claudia / revisores
+ *   exports            → Audit trail de qué se exportó y cuándo
+ *   consumption_logs   → Tracking de consumo de Claude API por tenant
+ */
+
+import {
+  pgTable,
+  uuid,
+  text,
+  integer,
+  boolean,
+  timestamp,
+  jsonb,
+  numeric,
+} from 'drizzle-orm/pg-core';
+import { relations } from 'drizzle-orm';
+
+// =====================================================
+// TENANTS
+// =====================================================
+export const tenants = pgTable('tenants', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  slug: text('slug').notNull().unique(),
+  name: text('name').notNull(),
+  legalEntity: text('legal_entity').notNull(),
+  brandVariants: jsonb('brand_variants').$type<string[]>().default([]),
+  systemPromptBase: text('system_prompt_base').notNull(),
+  semillaVisual: jsonb('semilla_visual').$type<{
+    palette?: Record<string, string>;
+    style?: string;
+    notes?: string;
+  }>().default({}),
+  canonicalAvatarUrl: text('canonical_avatar_url'),
+  monthlyTokenLimit: integer('monthly_token_limit').default(1000000),
+  active: boolean('active').notNull().default(true),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+});
+
+// =====================================================
+// USERS
+// =====================================================
+export const users = pgTable('users', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  email: text('email').notNull().unique(),
+  name: text('name').notNull(),
+  role: text('role', { enum: ['admin', 'operator', 'reviewer'] })
+    .notNull()
+    .default('operator'),
+  token: text('token').notNull().unique(),
+  active: boolean('active').notNull().default(true),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+});
+
+// =====================================================
+// TEMPLATES
+// =====================================================
+export const templates = pgTable('templates', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  slug: text('slug').notNull().unique(),
+  name: text('name').notNull(),
+  family: text('family', {
+    enum: ['prensa', 'opinion', 'institucional', 'academico'],
+  }).notNull(),
+  idPrefix: text('id_prefix').notNull(),
+  defaultClassification: text('default_classification').notNull(),
+  requiredVisualSlots: jsonb('required_visual_slots')
+    .$type<Array<{
+      type: 'hero_narrativa' | 'still_marca' | 'visual_cientifico' | 'gsv' | 'infografia';
+      required: boolean;
+      min?: number;
+      max?: number;
+    }>>()
+    .default([]),
+  pipelinePhases: jsonb('pipeline_phases').$type<string[]>().default([]),
+  systemPromptAddendum: text('system_prompt_addendum'),
+  semillaVisualOverride: jsonb('semilla_visual_override').$type<Record<string, unknown>>(),
+  reviewLevel: text('review_level', { enum: ['express', 'profunda'] })
+    .notNull()
+    .default('profunda'),
+  active: boolean('active').notNull().default(true),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+});
+
+// =====================================================
+// PROJECTS
+// =====================================================
+export const projects = pgTable('projects', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  publicId: text('public_id').notNull().unique(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id),
+  templateId: uuid('template_id').notNull().references(() => templates.id),
+  brandVariant: text('brand_variant'),
+  title: text('title').notNull(),
+  status: text('status', {
+    enum: [
+      'draft',
+      'validacion',
+      'pesquisa',
+      'produccion',
+      'visual',
+      'revision',
+      'aprobado',
+      'exportado',
+    ],
+  })
+    .notNull()
+    .default('draft'),
+  thesis: text('thesis'),
+  classification: text('classification').notNull(),
+  data: jsonb('data').$type<Record<string, unknown>>().default({}),
+  createdBy: uuid('created_by').references(() => users.id),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+});
+
+// =====================================================
+// ASSETS
+// =====================================================
+export const assets = pgTable('assets', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  projectId: uuid('project_id')
+    .notNull()
+    .references(() => projects.id, { onDelete: 'cascade' }),
+  type: text('type', {
+    enum: ['hero_narrativa', 'still_marca', 'visual_cientifico', 'gsv', 'infografia'],
+  }).notNull(),
+  fileUrl: text('file_url').notNull(),
+  caption: text('caption'),
+  altText: text('alt_text'),
+  origin: text('origin', { enum: ['ia_generated', 'real_photo', 'illustration'] })
+    .notNull()
+    .default('ia_generated'),
+  originTool: text('origin_tool').default('manus_im'),
+  representsRealPerson: boolean('represents_real_person').notNull().default(false),
+  consentDocUrl: text('consent_doc_url'),
+  version: integer('version').notNull().default(1),
+  previousVersionId: uuid('previous_version_id'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+});
+
+// =====================================================
+// REVISIONS
+// =====================================================
+export const revisions = pgTable('revisions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  projectId: uuid('project_id')
+    .notNull()
+    .references(() => projects.id, { onDelete: 'cascade' }),
+  reviewerId: uuid('reviewer_id').references(() => users.id),
+  level: text('level', { enum: ['express', 'profunda'] }).notNull(),
+  status: text('status', {
+    enum: ['pending', 'approved', 'rejected', 'changes_requested'],
+  }).notNull(),
+  comments: text('comments'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+});
+
+// =====================================================
+// EXPORTS
+// =====================================================
+export const exports_ = pgTable('exports', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  projectId: uuid('project_id')
+    .notNull()
+    .references(() => projects.id, { onDelete: 'cascade' }),
+  exportType: text('export_type', {
+    enum: ['editor', 'medios_propios', 'redes', 'tracking_cto', 'empaquetado_interno'],
+  }).notNull(),
+  fileUrl: text('file_url'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+});
+
+// =====================================================
+// CONSUMPTION LOGS
+// =====================================================
+export const consumptionLogs = pgTable('consumption_logs', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id')
+    .notNull()
+    .references(() => tenants.id),
+  projectId: uuid('project_id').references(() => projects.id, { onDelete: 'set null' }),
+  model: text('model').notNull(),
+  tool: text('tool'),
+  inputTokens: integer('input_tokens').notNull().default(0),
+  outputTokens: integer('output_tokens').notNull().default(0),
+  costUsd: numeric('cost_usd', { precision: 10, scale: 6 }).notNull().default('0'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+});
+
+// =====================================================
+// RELATIONS
+// =====================================================
+export const tenantsRelations = relations(tenants, ({ many }) => ({
+  projects: many(projects),
+  consumptionLogs: many(consumptionLogs),
+}));
+
+export const projectsRelations = relations(projects, ({ one, many }) => ({
+  tenant: one(tenants, { fields: [projects.tenantId], references: [tenants.id] }),
+  template: one(templates, { fields: [projects.templateId], references: [templates.id] }),
+  createdByUser: one(users, { fields: [projects.createdBy], references: [users.id] }),
+  assets: many(assets),
+  revisions: many(revisions),
+  exports: many(exports_),
+}));
+
+export const assetsRelations = relations(assets, ({ one }) => ({
+  project: one(projects, { fields: [assets.projectId], references: [projects.id] }),
+}));
+
+export const revisionsRelations = relations(revisions, ({ one }) => ({
+  project: one(projects, { fields: [revisions.projectId], references: [projects.id] }),
+  reviewer: one(users, { fields: [revisions.reviewerId], references: [users.id] }),
+}));
