@@ -67,7 +67,7 @@ PARA CADA HIPÓTESIS DEVOLVÉ:
 5. "tono": Tono editorial recomendado si la hipótesis se confirma → "informativo" | "analitico" | "narrativo" | "urgente"
 6. "lentes": Array con los lentes que activa esta hipótesis (ej: ["interes_humano", "impacto", "novedad"])
 7. "fuentes_sugeridas": 2-3 fuentes TIPO, cada una como objeto con "cargo", "institucion" y "pais". Ejemplo: {"cargo": "Director de Epidemiología", "institucion": "Ministerio de Salud", "pais": "Chile"}. Son categorías de fuente, no personas reales.
-8. "verificacion": Nivel de verificación requerido → "hipotesis" (afirmación a probar desde cero) | "dato_referencial" (existe dato público que podría respaldarla) | "requiere_pesquisa" (necesita investigación de campo, entrevistas, FOIA, terreno)
+8. "verificacion": Nivel de verificación requerido → "hipotesis" (afirmación a probar desde cero) | "requiere_pesquisa" (necesita investigación de campo, entrevistas, FOIA, terreno). NOTA: NO uses la categoria "dato_referencial". Toda hipotesis que parezca tener un dato publico de respaldo debe igualmente clasificarse como "requiere_pesquisa", porque la verificacion en terreno del dato sigue siendo necesaria. La categoria "dato_referencial" fue eliminada deliberadamente por actuar como un atajo de fabricacion.
 9. "pregunta_clave": La pregunta central que la pesquisa debe responder para validar o refutar la hipótesis.
 10. "riesgo": Objeto con "nivel" ("bajo" | "medio" | "alto") y "justificacion" breve. Riesgo editorial/legal/ético de publicar esto.
 11. "verificaciones_criticas": Array de 3 a 5 preguntas CONCRETAS que la pesquisa debe responder afirmativamente antes de considerar la hipótesis publicable. Ejemplo: ["¿El programa X existe formalmente y en qué decreto consta?", "¿Qué cifra exacta de ejecución presupuestaria reporta la Contraloría para 2025?", "¿Hay testimonios directos de beneficiarios contactables?"]. No son preguntas retóricas — son checks operativos.
@@ -98,7 +98,7 @@ Respondé ÚNICAMENTE con un JSON válido, sin markdown, sin backticks, sin text
       "fuentes_sugeridas": [
         {"cargo": "...", "institucion": "...", "pais": "..."}
       ],
-      "verificacion": "hipotesis|dato_referencial|requiere_pesquisa",
+      "verificacion": "hipotesis|requiere_pesquisa",
       "pregunta_clave": "...",
       "riesgo": {"nivel": "bajo|medio|alto", "justificacion": "..."},
       "verificaciones_criticas": [
@@ -386,11 +386,20 @@ REGLA ESPAÑOL LATINOAMERICANO:
 Vocabulario Chile/Uruguay. Sin anglicismos innecesarios. Sin "powerhouse", sin "stakeholder", sin "compliance", sin "engagement", sin "insight".
 
 REGLA DE EXTENSION SEGUN FAMILIA DEL TEMPLATE:
+
+El rango de palabras es un OBJETIVO orientativo, NO un requisito duro. Los rangos por familia son:
 - familia "prensa" (Reportaje, Nota, Cronica, Entrevista): 800 a 2000 palabras
 - familia "opinion" (Columna, Editorial, Carta): 500 a 900 palabras
 - familia "institucional" (Informe, Asesoria Legislativa, Investigacion, White Paper, Minuta): 1500 a 3500 palabras
 - familia "academico" (Paper): 2000 a 4500 palabras
-La metadata del JSON debe reportar la extension real en palabras del cuerpo generado.
+
+SUBORDINACION CRITICA — EL RANGO ESTA SUBORDINADO A LA REGLA ANTI-FABRICACION:
+Si el expediente tiene poca evidencia documentada (pocas fuentes en el ODF, o fuentes con notas escuetas, o muchas verificaciones criticas sin resolver), el borrador PUEDE y DEBE quedar por debajo del minimo del rango. Es preferible un borrador corto y honesto que un borrador largo y especulativo. La regla anti-fabricacion gana siempre sobre el rango de extension. NUNCA infles parrafos con interpretacion, contexto generico, generalidades, o repeticiones para alcanzar el minimo del rango.
+
+OBLIGACION DE DECLARACION:
+Cuando la extension real del cuerpo quede por debajo del minimo del rango de su familia, DEBES mencionarlo explicitamente en el campo "notas_editoriales" del JSON de salida, con esta estructura: "El borrador quedo en X palabras, por debajo del rango minimo de Y palabras para familia Z. Razon: el expediente solo aporta [descripcion concreta del material disponible]. Inflar el texto para alcanzar el minimo habria requerido especulacion, lo cual viola la regla anti-fabricacion." Si la extension queda dentro del rango, no es necesario mencionarlo.
+
+La metadata del JSON debe reportar la extension real en palabras del cuerpo generado, sin redondear ni ajustar al rango.
 
 ESTRUCTURA DEL CUERPO SEGUN FAMILIA DEL TEMPLATE:
 
