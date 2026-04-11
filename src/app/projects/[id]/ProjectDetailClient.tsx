@@ -2948,34 +2948,470 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                 </div>
               )}
 
-            {/* ── Generador de Borrador (Chunk 8B-1: placeholder, UI completa en 8B-2) ── */}
+            {/* ── Generador de Borrador (Chunk 8B-2: UI completa) ── */}
             {activeTool === 'borrador' && (
-              <div className="bg-space-cadet/40 border border-davy-gray/30 rounded-lg p-8 text-center">
-                <p className="text-seasalt text-lg mb-2">✍️ Generador de Borrador</p>
-                <p className="text-davy-gray text-sm">
-                  UI en construccion — Chunk 8B-2.
-                </p>
-                <p className="text-davy-gray/70 text-xs mt-4">
-                  Backend listo (Chunk 8A). Handler y estado cableados (Chunk 8B-1). La interfaz completa
-                  (panel de contexto, formulario, resultado) llega en el proximo sub-chunk.
-                </p>
-                {/* Wiring temporal para que TypeScript reconozca el uso de los estados del Chunk 8B-1.
-                    El boton no se renderiza visiblemente; queda oculto hasta 8B-2. */}
-                <button
-                  type="button"
-                  onClick={handleGenerateBorrador}
-                  disabled={generandoBorrador}
-                  className="hidden"
-                  aria-hidden="true"
-                  data-borrador-wiring="chunk8b1"
-                >
-                  {genBorradorError ? 'error' : 'wiring'}
-                </button>
-                <input
-                  type="hidden"
-                  value={borradorOperadorNotas}
-                  onChange={(e) => setBorradorOperadorNotas(e.target.value)}
-                />
+              <div className="space-y-6">
+                {/* Header del tab */}
+                <div className="border-b border-davy-gray/30 pb-4">
+                  <h2 className="text-seasalt text-xl font-semibold flex items-center gap-2">
+                    <span>✍️</span>
+                    <span>Generador de Borrador</span>
+                  </h2>
+                  <p className="text-davy-gray text-sm mt-1">
+                    Escribe el borrador completo del articulo final usando el expediente verificado:
+                    hipotesis elegida + fuentes del ODF + iteraciones previas del Validador.
+                  </p>
+                </div>
+
+                {/* ── Panel de contexto del expediente (siempre visible) ── */}
+                {(() => {
+                  const dataObj = (project?.data ?? {}) as Record<string, unknown>;
+                  const hipElegida = dataObj.hipotesis_elegida as Record<string, unknown> | undefined;
+                  const fuentesArr = (dataObj.fuentes as unknown[] | undefined) ?? [];
+                  const vhpsArr =
+                    (dataObj.validacion_hipotesis_pista as unknown[] | undefined) ?? [];
+                  const valBorradorArr =
+                    (dataObj.validaciones_borrador as unknown[] | undefined) ?? [];
+                  const borradorPrevio = dataObj.borrador as Record<string, unknown> | undefined;
+
+                  // Conteo de fuentes por estado
+                  const fuentesPorEstado = {
+                    verificada: 0,
+                    contactada: 0,
+                    por_contactar: 0,
+                    descartada: 0,
+                  };
+                  fuentesArr.forEach((f) => {
+                    const fr = f as Record<string, unknown>;
+                    const est = String(fr.estado ?? 'por_contactar');
+                    if (est in fuentesPorEstado) {
+                      fuentesPorEstado[est as keyof typeof fuentesPorEstado] += 1;
+                    }
+                  });
+
+                  const tieneHipotesis = !!hipElegida && typeof hipElegida === 'object';
+                  const fuentesTotal = fuentesArr.length;
+                  const tieneTraspaso = !!project?.tenantSlug && !!project?.templateSlug;
+
+                  return (
+                    <div className="bg-space-cadet/40 border border-davy-gray/30 rounded-lg p-5 space-y-4">
+                      <h3 className="text-seasalt text-sm font-semibold uppercase tracking-wide">
+                        Contexto del expediente
+                      </h3>
+
+                      {/* Hipotesis elegida */}
+                      {tieneHipotesis ? (
+                        <div className="bg-oxford-blue/60 border border-davy-gray/30 rounded p-4">
+                          <p className="text-davy-gray text-xs uppercase tracking-wide mb-2">
+                            Hipotesis elegida
+                          </p>
+                          <p className="text-seasalt text-sm font-medium mb-2">
+                            {String(hipElegida?.titulo ?? '[sin titulo]')}
+                          </p>
+                          {hipElegida?.gancho ? (
+                            <p className="text-davy-gray text-xs italic mb-2">
+                              {String(hipElegida.gancho)}
+                            </p>
+                          ) : null}
+                          {hipElegida?.pregunta_clave ? (
+                            <p className="text-davy-gray text-xs">
+                              <span className="text-amber-brand">Pregunta clave:</span>{' '}
+                              {String(hipElegida.pregunta_clave)}
+                            </p>
+                          ) : null}
+                          {Array.isArray(hipElegida?.verificaciones_criticas) ? (
+                            <p className="text-davy-gray text-xs mt-2">
+                              <span className="text-amber-brand">Verificaciones criticas:</span>{' '}
+                              {(hipElegida.verificaciones_criticas as unknown[]).length}
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <div className="bg-red-500/10 border border-red-500/40 rounded p-4">
+                          <p className="text-red-400 text-sm font-medium mb-1">
+                            ⚠️ Falta elegir una hipotesis
+                          </p>
+                          <p className="text-davy-gray text-xs">
+                            El Generador de Borrador necesita una hipotesis elegida como ancla
+                            estructural. Sin hipotesis no se puede generar el borrador. Volve a
+                            la fase Validacion (retroceder el pipeline), genera hipotesis y elegi
+                            una antes de continuar.
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Tenant + template (sanity) */}
+                      {!tieneTraspaso && (
+                        <div className="bg-red-500/10 border border-red-500/40 rounded p-3">
+                          <p className="text-red-400 text-xs">
+                            ⚠️ Este project no tiene tenant ni template asignados. El traspaso a
+                            MetricPress debio ocurrir antes de entrar a Produccion. Reporta este
+                            estado: es un bug del pipeline.
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Fuentes */}
+                      {fuentesTotal > 0 ? (
+                        <div className="bg-oxford-blue/60 border border-davy-gray/30 rounded p-4">
+                          <p className="text-davy-gray text-xs uppercase tracking-wide mb-2">
+                            Fuentes del ODF ({fuentesTotal})
+                          </p>
+                          <div className="flex flex-wrap gap-2 text-xs">
+                            {fuentesPorEstado.verificada > 0 && (
+                              <span className="bg-green-500/20 text-green-400 border border-green-500/40 px-2 py-1 rounded">
+                                {fuentesPorEstado.verificada} verificadas
+                              </span>
+                            )}
+                            {fuentesPorEstado.contactada > 0 && (
+                              <span className="bg-blue-500/20 text-blue-400 border border-blue-500/40 px-2 py-1 rounded">
+                                {fuentesPorEstado.contactada} contactadas
+                              </span>
+                            )}
+                            {fuentesPorEstado.por_contactar > 0 && (
+                              <span className="bg-davy-gray/30 text-davy-gray border border-davy-gray/40 px-2 py-1 rounded">
+                                {fuentesPorEstado.por_contactar} por contactar
+                              </span>
+                            )}
+                            {fuentesPorEstado.descartada > 0 && (
+                              <span className="bg-red-500/20 text-red-400 border border-red-500/40 px-2 py-1 rounded">
+                                {fuentesPorEstado.descartada} descartadas (no se citaran)
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="bg-amber-brand/10 border border-amber-brand/40 rounded p-3">
+                          <p className="text-amber-brand text-xs">
+                            ⚠️ El ODF esta vacio. Se puede generar igual, pero el borrador va a
+                            quedar muy escueto y con muchas advertencias [VERIFICAR]. Te lo va a
+                            confirmar antes de ejecutar.
+                          </p>
+                        </div>
+                      )}
+
+                      {/* VHP previas */}
+                      {vhpsArr.length > 0 && (
+                        <div className="text-davy-gray text-xs">
+                          <span className="text-amber-brand">{vhpsArr.length}</span> validacion(es)
+                          VHP previa(s) van a ir como contexto.
+                        </div>
+                      )}
+
+                      {/* Iteraciones previas del Validador de Borrador */}
+                      {valBorradorArr.length > 0 && (
+                        <div className="bg-amber-brand/10 border border-amber-brand/40 rounded p-3">
+                          <p className="text-amber-brand text-xs font-medium mb-1">
+                            🔁 {valBorradorArr.length} iteracion(es) previa(s) del Validador de
+                            Borrador
+                          </p>
+                          <p className="text-davy-gray text-xs">
+                            Esta nueva version va a recibir las criticas anteriores y debe
+                            corregirlas explicitamente.
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Borrador previo (si existe) */}
+                      {borradorPrevio && (
+                        <div className="text-davy-gray text-xs italic">
+                          Ya existe un borrador generado. Si regenerás, va a sobreescribir el
+                          anterior.
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {/* ── Form de generacion ── */}
+                <div className="bg-space-cadet/40 border border-davy-gray/30 rounded-lg p-5 space-y-4">
+                  <h3 className="text-seasalt text-sm font-semibold uppercase tracking-wide">
+                    Notas adicionales del operador (opcional)
+                  </h3>
+                  <textarea
+                    value={borradorOperadorNotas}
+                    onChange={(e) => setBorradorOperadorNotas(e.target.value)}
+                    placeholder="Contexto editorial, restricciones, enfoque preferido, indicaciones para el modelo..."
+                    rows={3}
+                    className="w-full bg-oxford-blue border border-davy-gray/50 rounded px-3 py-2.5 text-seasalt text-sm placeholder:text-davy-gray/50 focus:outline-none focus:border-amber-brand resize-y"
+                  />
+
+                  {(() => {
+                    const dataObj = (project?.data ?? {}) as Record<string, unknown>;
+                    const hipElegida = dataObj.hipotesis_elegida as
+                      | Record<string, unknown>
+                      | undefined;
+                    const tieneHipotesis = !!hipElegida && typeof hipElegida === 'object';
+                    const tieneTraspaso = !!project?.tenantSlug && !!project?.templateSlug;
+                    const borradorPrevio = dataObj.borrador as Record<string, unknown> | undefined;
+                    const labelBoton = borradorPrevio ? 'Regenerar Borrador' : 'Generar Borrador';
+                    const disabled = !tieneHipotesis || !tieneTraspaso || generandoBorrador;
+
+                    return (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (borradorPrevio) {
+                            const ok = confirm(
+                              'Esto va a sobreescribir el borrador anterior. ¿Continuar?'
+                            );
+                            if (!ok) return;
+                          }
+                          await handleGenerateBorrador();
+                        }}
+                        disabled={disabled}
+                        className="w-full bg-amber-brand hover:bg-amber-brand/90 disabled:bg-davy-gray/30 disabled:text-davy-gray disabled:cursor-not-allowed text-oxford-blue font-semibold py-3 rounded transition-colors"
+                      >
+                        {generandoBorrador ? 'Generando borrador...' : labelBoton}
+                      </button>
+                    );
+                  })()}
+
+                  {genBorradorError && (
+                    <div className="bg-red-500/10 border border-red-500/40 rounded p-3">
+                      <p className="text-red-400 text-sm">{genBorradorError}</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* ── Panel de resultado (solo si data.borrador existe) ── */}
+                {(() => {
+                  const dataObj = (project?.data ?? {}) as Record<string, unknown>;
+                  const borradorRaw = dataObj.borrador as Record<string, unknown> | undefined;
+                  if (!borradorRaw) return null;
+
+                  const parsed = parseBorradorFromRaw(borradorRaw);
+                  if (!parsed) {
+                    return (
+                      <div className="bg-red-500/10 border border-red-500/40 rounded p-4">
+                        <p className="text-red-400 text-sm">
+                          El borrador guardado tiene una estructura invalida. Regenera para
+                          repararlo.
+                        </p>
+                      </div>
+                    );
+                  }
+
+                  const { borrador, metadata, notas_editoriales, generadoEn } = parsed;
+
+                  // Texto plano para copiar al portapapeles (modo a: solo cuerpo, sin metadata)
+                  const textoPlano = (() => {
+                    const partes: string[] = [];
+                    if (borrador.titulo) partes.push(borrador.titulo);
+                    if (borrador.bajada) partes.push(borrador.bajada);
+                    if (borrador.lead) partes.push(borrador.lead);
+                    borrador.cuerpo.forEach((sec) => {
+                      if (sec.subtitulo) partes.push(sec.subtitulo);
+                      sec.parrafos.forEach((p) => partes.push(p));
+                    });
+                    if (borrador.cierre) partes.push(borrador.cierre);
+                    return partes.join('\n\n');
+                  })();
+
+                  const handleCopiar = async () => {
+                    try {
+                      await navigator.clipboard.writeText(textoPlano);
+                      alert('Borrador copiado al portapapeles.');
+                    } catch {
+                      alert('No se pudo copiar al portapapeles. Copia manualmente desde el panel.');
+                    }
+                  };
+
+                  return (
+                    <div className="bg-space-cadet/40 border border-davy-gray/30 rounded-lg p-5 space-y-5">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-seasalt text-sm font-semibold uppercase tracking-wide">
+                          Borrador generado
+                        </h3>
+                        <span className="text-davy-gray text-xs">
+                          {new Date(generadoEn).toLocaleString('es-CL')}
+                        </span>
+                      </div>
+
+                      {/* Titulo + bajada */}
+                      <div>
+                        <h4 className="text-seasalt text-2xl font-bold leading-tight mb-2">
+                          {borrador.titulo}
+                        </h4>
+                        {borrador.bajada && (
+                          <p className="text-davy-gray text-base italic">{borrador.bajada}</p>
+                        )}
+                      </div>
+
+                      {/* Lead */}
+                      {borrador.lead && (
+                        <div className="bg-oxford-blue/60 border-l-4 border-amber-brand pl-4 py-3">
+                          <p className="text-seasalt text-sm leading-relaxed">{borrador.lead}</p>
+                        </div>
+                      )}
+
+                      {/* Cuerpo */}
+                      {borrador.cuerpo.length > 0 && (
+                        <div className="space-y-4">
+                          {borrador.cuerpo.map((sec, idx) => (
+                            <div key={idx}>
+                              {sec.subtitulo && (
+                                <h5 className="text-amber-brand text-sm font-semibold mb-2">
+                                  {sec.subtitulo}
+                                </h5>
+                              )}
+                              <div className="space-y-3">
+                                {sec.parrafos.map((p, pidx) => (
+                                  <p
+                                    key={pidx}
+                                    className="text-seasalt text-sm leading-relaxed"
+                                  >
+                                    {p}
+                                  </p>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Cierre */}
+                      {borrador.cierre && (
+                        <div className="bg-oxford-blue/60 border-l-4 border-davy-gray pl-4 py-3">
+                          <p className="text-seasalt text-sm leading-relaxed italic">
+                            {borrador.cierre}
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Metadata */}
+                      <div className="border-t border-davy-gray/30 pt-4 space-y-3">
+                        <h5 className="text-davy-gray text-xs uppercase tracking-wide">
+                          Metadata
+                        </h5>
+                        <div className="flex flex-wrap gap-2 text-xs">
+                          <span className="bg-oxford-blue/60 border border-davy-gray/40 text-davy-gray px-2 py-1 rounded">
+                            {metadata.extension_palabras} palabras
+                          </span>
+                          {metadata.tipo_pieza && (
+                            <span className="bg-oxford-blue/60 border border-davy-gray/40 text-davy-gray px-2 py-1 rounded">
+                              {metadata.tipo_pieza}
+                            </span>
+                          )}
+                          {metadata.tono_aplicado && (
+                            <span className="bg-oxford-blue/60 border border-davy-gray/40 text-davy-gray px-2 py-1 rounded">
+                              tono: {metadata.tono_aplicado}
+                            </span>
+                          )}
+                        </div>
+
+                        {metadata.fuentes_citadas.length > 0 && (
+                          <div>
+                            <p className="text-davy-gray text-xs mb-1">Fuentes citadas:</p>
+                            <div className="flex flex-wrap gap-1">
+                              {metadata.fuentes_citadas.map((f, i) => (
+                                <span
+                                  key={i}
+                                  className="bg-green-500/10 text-green-400 border border-green-500/30 px-2 py-0.5 rounded text-xs"
+                                >
+                                  {f}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {metadata.advertencias_verificacion.length > 0 && (
+                          <div>
+                            <p className="text-amber-brand text-xs mb-1 font-medium">
+                              ⚠️ Advertencias de verificacion ({metadata.advertencias_verificacion.length})
+                            </p>
+                            <ul className="space-y-1">
+                              {metadata.advertencias_verificacion.map((a, i) => (
+                                <li
+                                  key={i}
+                                  className="text-davy-gray text-xs bg-amber-brand/10 border border-amber-brand/30 rounded px-2 py-1"
+                                >
+                                  {a}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {metadata.verificaciones_criticas_resueltas.length > 0 && (
+                          <div>
+                            <p className="text-green-400 text-xs mb-1 font-medium">
+                              ✅ Verificaciones criticas resueltas (
+                              {metadata.verificaciones_criticas_resueltas.length})
+                            </p>
+                            <ul className="space-y-1">
+                              {metadata.verificaciones_criticas_resueltas.map((v, i) => (
+                                <li
+                                  key={i}
+                                  className="text-davy-gray text-xs bg-green-500/10 border border-green-500/30 rounded px-2 py-1"
+                                >
+                                  {v}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {metadata.verificaciones_criticas_pendientes.length > 0 && (
+                          <div>
+                            <p className="text-amber-brand text-xs mb-1 font-medium">
+                              ⏳ Verificaciones criticas pendientes (
+                              {metadata.verificaciones_criticas_pendientes.length})
+                            </p>
+                            <ul className="space-y-1">
+                              {metadata.verificaciones_criticas_pendientes.map((v, i) => (
+                                <li
+                                  key={i}
+                                  className="text-davy-gray text-xs bg-amber-brand/10 border border-amber-brand/30 rounded px-2 py-1"
+                                >
+                                  {v}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Notas editoriales */}
+                      {notas_editoriales && (
+                        <div className="border-t border-davy-gray/30 pt-4">
+                          <h5 className="text-davy-gray text-xs uppercase tracking-wide mb-2">
+                            Notas editoriales del modelo
+                          </h5>
+                          <p className="text-davy-gray text-xs italic leading-relaxed">
+                            {notas_editoriales}
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Acciones */}
+                      <div className="border-t border-davy-gray/30 pt-4 flex flex-wrap gap-3">
+                        <button
+                          type="button"
+                          onClick={handleCopiar}
+                          className="bg-davy-gray/30 hover:bg-davy-gray/50 text-seasalt text-sm px-4 py-2 rounded transition-colors"
+                        >
+                          📋 Copiar al portapapeles
+                        </button>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const ok = confirm(
+                              'Avanzar a la fase Visual. El borrador queda guardado y vas a poder volver. ¿Continuar?'
+                            );
+                            if (!ok) return;
+                            await handlePipelineAction('advance');
+                          }}
+                          disabled={actionLoading}
+                          className="bg-amber-brand hover:bg-amber-brand/90 disabled:bg-davy-gray/30 disabled:cursor-not-allowed text-oxford-blue text-sm font-semibold px-4 py-2 rounded transition-colors"
+                        >
+                          ➡️ Avanzar a Visual
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             )}
           </div>
