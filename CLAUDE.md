@@ -215,6 +215,50 @@ Not a Chunk 8 bug. The decision to use `navigator.clipboard` as the primary path
 - Token usage in the smoke test was 4185 input + 1628 output for the synthetic case, which lands at roughly USD 0.04 per generation with Sonnet 4. Real cases with richer expedientes will use more tokens but should remain under USD 0.10 per borrador. Sustainable for the projected volume of 6-8 projects per month.
 - Latency was 27.2 seconds in the smoke test. Acceptable for a one-shot full-draft generation. No need to introduce streaming UI for now.
 
+## Hallazgos de validacion — Chunk 9 (11 abril 2026)
+
+Chunk 9 (refinements) shipped in four sub-chunks executed over a single operator session, each validated visually in production before advancing to the next:
+
+- 9A: prompt refinements only (no UI changes). Smoke tested by inspection of the updated prompts and by generating a test hypothesis after deploy.
+- 9B: UX refinements of the Borrador tab and VHP navigation button. Validated visually with a real project.
+- 9C: URL field in ODF, curation of the Validador de Borrador history, and soft gates on pipeline transitions. Validated visually with a real project exercising create/edit/delete of sources with URLs, marking and removing validation iterations, and triggering both soft gates.
+- 9D: tesis optional + cleanup of legacy /tools/angulos route. Validated by confirming the placeholder renders on projects without thesis and that the build is clean after deleting the tools directory.
+
+Two findings worth preserving emerged during Chunk 9 execution, both operational rather than architectural:
+
+### a) Next.js 16 stale typegen after structural route deletion
+
+When deleting a full route directory in Next.js 16 with Turbopack (in this case `src/app/tools/angulos/` including its `layout.tsx`), the first `npm run build` after the deletion fails with a TypeScript error of the form:
+
+```
+Type error: Type 'Route' does not satisfy the constraint '"/"'.
+  Type 'LayoutRoutes' is not assignable to type '"/"'.
+    Type '"/tools/angulos"' is not assignable to type '"/"'.
+```
+
+This is NOT a code bug. The typegen artifact at `.next/dev/types/validator.ts` still references `LayoutRoutes` from the deleted route because the incremental cache does not auto-invalidate on structural deletions of layouts. The fix is `rm -rf .next && npm run build` to force a clean typegen regeneration.
+
+Operational lesson: any chunk that deletes a layout file (or a full route directory containing one) should explicitly include a clean rebuild step in its prompt. This prevents confusion during execution: if the build fails with a LayoutRoutes type error after a structural deletion, the reflex is to clean `.next` before diagnosing deeper. Not a refinement to track — just a workflow rule documented here for future chunks touching route structure.
+
+### b) F1 was already partially implemented before Chunk 9
+
+The item F1 (pipeline sin tesis obligatoria) was declared as a pending refinement based on the assumption that the create-project form still required thesis. The reconnaissance pass of Chunk 9D revealed that the form already accepted thesis optional since an earlier chunk (likely 5c): the label already read "(recomendado)", the validator only enforced title, the request body sent `thesis: undefined` when empty, the POST endpoint already accepted thesis nullable, and the INSERT already used `thesis ?? null`.
+
+The only real work left for F1 was cosmetic and informational:
+- Replacing the short-circuit render of thesis in `ProjectDetailClient.tsx` with a ternary that shows an informational placeholder when `project.thesis` is null/empty, telling the operator that hypotheses can be generated first and the thesis can emerge from the chosen one.
+- Polishing the label from "(recomendado)" to "(opcional)" and updating the helper text to match the new framing.
+
+Operational lesson: the Roadmap can drift from the real state of the code across many chunks. The reconnaissance pass before executing a refinement is not optional — it validates whether the refinement is still needed. In this case, the reconnaissance saved the chunk from overwriting a working form with identical work.
+
+### Notes on the successful Chunk 9 execution
+
+- The Chunk 9 was pre-divided into 4 sub-chunks during triage to keep each commit atomic and each prompt manageable. The division proved sound: 9A and 9B were small, 9C was the large one with 13 `str_replace` edits distributed across distinct blocks of `ProjectDetailClient.tsx`, and 9D closed with the refactor-adjacent work. No sub-chunk required rework.
+- Decision C (mixed soft gates) from Chunk 8 was propagated to the pipeline transitions in 9C E1: `validacion -> pesquisa` without elected hypothesis triggers a confirm, `pesquisa -> produccion` with empty ODF triggers a confirm. Both coexist with the existing hard-block of `TRASPASO_REQUIRED` without interference.
+- The refactor of the Generador de Borrador extension rule in 9A A1 explicitly subordinated the word range target to the anti-fabrication rule and added a declaration obligation in `notas_editoriales`. Validated in production on a real draft: when the evidence was thin, the model correctly declared the undershoot explicitly. The refinement worked as designed.
+- The `dato_referencial` category removal in 9A D1 was complemented by preserved backward compatibility: legacy hypotheses persisted in `data.hipotesis` or `data.hipotesis_elegida` with the old category value continue to render because `parseHipotesisFromRaw` accepts any string for `verificacion`. Only new hypotheses generated after 9A deploy use the reduced set.
+- The curation of the Validador de Borrador history in 9C C2 implemented the pattern proposed in the Chunk 7 finding "b": a dedicated field `data.validacion_borrador_definitiva_id` points to the chosen iteration, deletion of the chosen entry atomically clears the pointer in the same PATCH, and the chosen entry displays a green "Definitiva" badge. Pattern worth replicating for any future list of AI-generated artifacts that need a "canonical choice" affordance.
+- Operational incident during Chunk 9D: the first `npm run build` after deleting `src/app/tools/` failed due to stale typegen cache (see finding "a" above). Claude Code correctly diagnosed the issue and proposed `rm -rf .next && npm run build` as the fix, but because the operator had no direct way to audit the intermediate state, the correct protocol was to stop and report instead of improvising. The fix itself was idiomatic and correct; the process lesson is that any action outside the original prompt requires explicit stop-and-report, even when the technical decision is sound.
+
 ## Roadmap
 
 Confirmed chunk ordering after Chunk 6 validation (10 abril 2026). Each chunk should preserve the Chunk 6 retrocompat contract: projects created under older chunks must keep rendering without writes to any of the new `data.*` keys.
@@ -241,18 +285,34 @@ Decision arquitectonica registrada (Opcion A del open question previo): el Gener
 
 Hallazgos de validacion: ver seccion "Hallazgos de validacion — Chunk 8 (11 abril 2026)" mas arriba.
 
-### Chunk 9 — Refinements
+### Chunk 9 — Refinements [COMPLETADO 11 abril 2026]
 
-- Local `.env.local` setup for development (pending since 10 abril 2026 when localhost validation was skipped in favor of production validation).
-- Cleanup of the legacy `/tools/angulos` route — either drop it from the nav, or refactor to the current IP/MP model.
-- Soft gates on pipeline transitions (finding "e").
-- Remove the `dato_referencial` category from the prompt (finding "b").
-- UX polish driven by real usage feedback.
-- Basic exporter implementation for the `exportado` phase.
-- Campo URL libre por fuente en ODF (finding "a1" del Chunk 7) — input opcional de texto, sin infraestructura de storage.
-- Curacion del historial del Validador de Borrador (finding "b" del Chunk 7, preexistente de Chunk 6) — boton "Marcar como definitiva" + boton "Eliminar" por entrada, patron identico al de `hipotesis_elegida`.
-- Boton de navegacion en el placeholder del tab VHP bloqueado (finding "c" del Chunk 7) — secondary button debajo del mensaje que dispare `setActiveTool('hipotesis')`.
-- Refinamiento de la regla de extension del prompt de `generador_borrador` (finding "a" del Chunk 8) — hacer explicito en el prompt MP que el rango de palabras es un objetivo, no un requisito duro. Si el expediente tiene poca evidencia documentada, el borrador puede quedar por debajo del minimo del rango y debe declararlo explicitamente en `notas_editoriales`.
-- Prefill del textarea de notas del operador en el Generador de Borrador (finding "b" del Chunk 8) — al montar el tab, si `data.borrador?.notasOperador` existe y el estado local esta vacio, prefill con ese valor. Patron identico al prefill del Constructor de Pitch desde `hipotesis_elegida`.
-- Fallback de copia al portapapeles en el Generador de Borrador (finding "c" del Chunk 8) — agregar un `<textarea>` oculto con la version texto plano del borrador y, en caso de fallo de `navigator.clipboard.writeText`, focusear y seleccionar ese textarea para que el operador pueda hacer Ctrl+C manualmente.
-- Pipeline puede arrancar sin tesis obligatoria (decision tomada el 11 abril 2026) — modificar el formulario de creacion de project para hacer `thesis` opcional y agregar un placeholder en el detail view tipo "Aun no hay tesis. Genera hipotesis primero, eligi una, y la tesis se infiere de ella". Refleja un flujo de trabajo periodistico real: a veces el operador arranca con un documento o un dato, no con una tesis.
+Cerrado en una sola sesion de trabajo dividida en cuatro sub-chunks secuenciales, cada uno con build limpio + commit + push + validacion visual por el operador antes de avanzar al siguiente:
+
+- `7d740bf` feat(chunk9a): refinamientos de prompts. A1 subordinacion explicita de la regla de extension del `generador_borrador` a la regla anti-fabricacion + obligacion de declarar en `notas_editoriales` cuando la extension real queda por debajo del rango minimo de la familia. D1 eliminacion de la categoria `dato_referencial` del prompt de `buildAngulosPrompt`, con nota explicita que prohibe su uso por actuar como atajo de fabricacion. Toca solo `prompts.ts`.
+
+- `194ca07` feat(chunk9b): refinamientos de UX del Borrador y navegacion del VHP. B1 prefill del textarea `borradorOperadorNotas` desde `data.borrador.notasOperador` al montar el tab, patron identico al prefill del Constructor de Pitch. B2 fallback de copia al portapapeles: textarea oculto + focus + select + alert con instruccion de Ctrl+C cuando `navigator.clipboard.writeText` falla. C3 boton secundario "Ir al Generador de Hipotesis" debajo del mensaje del placeholder VHP bloqueado. Toca solo `ProjectDetailClient.tsx`.
+
+- `9042321` feat(chunk9c): URL en ODF, curacion del historial Validador, soft gates pipeline. C1 campo `url` opcional por `Fuente` en ODF: nuevo input en el form entre rol/origen y grid de estado/confianza, link clickeable en el listado con `target=_blank`. C2 curacion del historial del Validador de Borrador: dos handlers nuevos (`handleMarcarValidacionDefinitiva`, `handleEliminarValidacionBorrador`), nuevo campo `data.validacion_borrador_definitiva_id`, badge verde "Definitiva" en el header de la tarjeta marcada, fila de botones dentro del panel expandido, eliminacion de la entrada definitiva limpia el puntero atomicamente en el mismo PATCH. E1 soft gates confirmables en `handlePipelineAction`: avanzar `validacion -> pesquisa` sin hipotesis elegida dispara confirm, avanzar `pesquisa -> produccion` con fuentes vacias dispara confirm, ambos coexisten con el hard-block `TRASPASO_REQUIRED`. Toca solo `ProjectDetailClient.tsx`.
+
+- `4fe106a` feat(chunk9d): pipeline sin tesis obligatoria y cleanup de ruta legacy. F1 placeholder informativo en el render de `project.thesis` cuando es null/vacio ("Aun no hay tesis definida. Puedes generar hipotesis en la fase Validacion y la tesis va a emerger de la hipotesis que elijas."), polish del label del form a "(opcional)" y del helper text en espaniol neutro. Hallazgo del reconocimiento: F1 ya estaba 80% implementado a nivel backend y validacion de form desde chunks anteriores, el trabajo real fue solo cosmetico. G1 eliminacion del directorio `src/app/tools/` entero: borra `tools/angulos/page.tsx`, `tools/angulos/AngulosClient.tsx`, `tools/angulos/layout.tsx` y los dos directorios contenedores. Remueve el link a `/tools/angulos` del array `links` en `Nav.tsx`. El build inicial fallo por stale typegen de Next.js 16 con Turbopack; fix aplicado con `rm -rf .next && npm run build` y documentado como hallazgo operacional (ver seccion "Hallazgos de validacion — Chunk 9 (11 abril 2026)" mas arriba).
+
+Hallazgos de validacion: ver seccion "Hallazgos de validacion — Chunk 9 (11 abril 2026)" mas arriba.
+
+### Chunk 10 — Agenda de Editores manual (next priority)
+
+Base minima de editores y periodistas chilenos por tier para uso interno de media relations del holding. Decidido en Chunk 9 que la pesquisa automatizada con IA no es confiable (validado empiricamente con dos intentos): los nombres pueden ser plausibles pero parcialmente falsos, y el costo de descubrir las entradas falsas es quemar contactos. La solucion es una agenda manual con CRUD propio.
+
+Alcance:
+- Nueva tabla `editores_agenda` en PostgreSQL (via Drizzle + init-sql.ts). Columnas minimas: `id`, `nombre`, `apellido`, `medio`, `seccion`, `tier` (1/2/3), `tenants_relevantes` (array), `tipo_pieza_recomendado` (array), `email` (opcional), `telefono` (opcional), `notas`, `ultima_verificacion` (fecha), `activo` (boolean), `creado_en`, `actualizado_en`.
+- Nueva pagina `/admin/editores` con UI CRUD basica: listado + form de alta + edicion + soft-delete. Sin importacion desde JSON. Sin busqueda avanzada. Sin integracion con el Constructor de Pitch en este chunk.
+- La integracion del Constructor de Pitch con `editores_agenda` (autopoblar el campo "medio destino" desde la agenda filtrada por tenant+template+tier) queda para Chunk 11 o posterior, cuando el operador ya tenga registros cargados y observe como querria consumirlos.
+
+### Chunk 11+ — Futuros (sin orden definitivo)
+
+- Integracion agenda de editores con Constructor de Pitch (depende de Chunk 10).
+- Upload real de documentos fuente en el ODF (a2 del Chunk 7): infraestructura de storage (Vercel Blob o S3), signed URLs, MIME validation, max file size, deletion contract. Chunk dedicado.
+- Exportador basico para fase `exportado` (primer destino probable: `empaquetado_interno` como zip). Chunk dedicado.
+- Asset library per tenant con versionado y metadata obligatoria (declaracion IA, alt text, origen).
+- Cleanup del map `VERIFICACION_COLORS` en `ProjectDetailClient.tsx`: eliminar la entrada `dato_referencial` que quedo huerfana despues del Chunk 9A D1 (se preservo para retrocompat de hipotesis legacy, pero se puede remover cuando se confirme que ya no quedan hipotesis antiguas con ese valor en produccion).
+- Cleanup del canal de error del Validador de Borrador: posiblemente consolidar `borradorError` y `genBorradorError` en un solo namespace cuando la arquitectura de errores evolucione. Por ahora conviven sin problemas.
