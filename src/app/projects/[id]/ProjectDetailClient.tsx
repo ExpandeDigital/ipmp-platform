@@ -121,6 +121,8 @@ interface Fuente {
   confianza: 'baja' | 'media' | 'alta';
   notas: string;
   fecha_registro: string;
+  // Chunk 9C (C1): URL libre opcional. Texto plano sin validacion de formato.
+  url?: string;
   // Trazabilidad: cuando una fuente fue auto-promovida desde el VHP (Chunk 7B)
   origen?: 'manual' | 'vhp';
   origen_validacion_id?: string;
@@ -479,6 +481,7 @@ function parseFuenteFromRaw(f: Record<string, unknown>): Fuente {
     estado,
     confianza,
     notas: String(f.notas ?? ''),
+    url: typeof f.url === 'string' && f.url ? f.url : undefined,
     fecha_registro:
       typeof f.fecha_registro === 'string' && f.fecha_registro
         ? f.fecha_registro
@@ -687,6 +690,8 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
   const [odfEstado, setOdfEstado] = useState<Fuente['estado']>('por_contactar');
   const [odfConfianza, setOdfConfianza] = useState<Fuente['confianza']>('media');
   const [odfNotas, setOdfNotas] = useState('');
+  // Chunk 9C (C1): URL libre opcional por fuente
+  const [odfUrl, setOdfUrl] = useState('');
   const [odfGuardando, setOdfGuardando] = useState(false);
   const [odfError, setOdfError] = useState<string | null>(null);
   const [odfEditandoId, setOdfEditandoId] = useState<string | null>(null);
@@ -777,6 +782,30 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
   // ── Pipeline actions ──
   async function handlePipelineAction(action: 'advance' | 'retreat') {
     if (!project || actionLoading) return;
+
+    // Chunk 9C (E1): Soft gates confirmables en transiciones criticas del pipeline.
+    // No reemplazan el hard-block del traspaso (que sigue activo abajo).
+    if (action === 'advance' && project.status === 'validacion') {
+      const dataObj = (project.data ?? {}) as Record<string, unknown>;
+      const tieneHipotesisElegida =
+        !!dataObj.hipotesis_elegida && typeof dataObj.hipotesis_elegida === 'object';
+      if (!tieneHipotesisElegida) {
+        const ok = confirm(
+          'No elegiste ninguna hipotesis. La fase Pesquisa funciona mejor con una hipotesis ancla. ¿Avanzar igual?'
+        );
+        if (!ok) return;
+      }
+    }
+    if (action === 'advance' && project.status === 'pesquisa') {
+      const dataObj = (project.data ?? {}) as Record<string, unknown>;
+      const fuentes = (dataObj.fuentes as unknown[] | undefined) ?? [];
+      if (fuentes.length === 0) {
+        const ok = confirm(
+          'No hay fuentes registradas en el ODF. El borrador va a quedar muy escueto y con muchas advertencias [VERIFICAR]. ¿Avanzar igual?'
+        );
+        if (!ok) return;
+      }
+    }
 
     if (action === 'advance' && project.status === 'pesquisa' && !project.hasTenant) {
       setShowTraspaso(true);
@@ -1239,6 +1268,71 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
     }
   }
 
+  // ── Curacion del historial del Validador de Borrador (Chunk 9C - C2) ──
+  async function handleMarcarValidacionDefinitiva(entryId: string) {
+    if (!project) return;
+    try {
+      const res = await fetch(`/api/projects/${project.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          data: { validacion_borrador_definitiva_id: entryId },
+        }),
+      });
+      if (!res.ok) {
+        const pj = await res.json();
+        throw new Error(pj.error || 'Error marcando validacion como definitiva');
+      }
+      await fetchProject();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Error desconocido');
+    }
+  }
+
+  async function handleEliminarValidacionBorrador(entryId: string) {
+    if (!project) return;
+    if (
+      !confirm(
+        '¿Eliminar esta iteracion del historial del Validador de Borrador? Esta accion no se puede deshacer.'
+      )
+    ) {
+      return;
+    }
+    try {
+      const dataObj = (project.data ?? {}) as Record<string, unknown>;
+      const currentRaw = dataObj.validaciones_borrador;
+      const current: ValidacionBorradorEntry[] = Array.isArray(currentRaw)
+        ? (currentRaw as unknown as ValidacionBorradorEntry[])
+        : [];
+      const next = current.filter((e) => e.id !== entryId);
+
+      // Si la entrada eliminada era la definitiva, limpiar tambien el puntero
+      const definitivaActual = dataObj.validacion_borrador_definitiva_id;
+      const limpiarDefinitiva = definitivaActual === entryId;
+
+      const patchBody: Record<string, unknown> = {
+        data: { validaciones_borrador: next },
+      };
+      if (limpiarDefinitiva) {
+        (patchBody.data as Record<string, unknown>).validacion_borrador_definitiva_id =
+          null;
+      }
+
+      const res = await fetch(`/api/projects/${project.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patchBody),
+      });
+      if (!res.ok) {
+        const pj = await res.json();
+        throw new Error(pj.error || 'Error eliminando validacion');
+      }
+      await fetchProject();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Error desconocido');
+    }
+  }
+
   // ── Construir pitch ──
   async function handleConstruirPitch() {
     if (!project || !pitchAngulo.trim()) return;
@@ -1300,6 +1394,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
     setOdfEstado('por_contactar');
     setOdfConfianza('media');
     setOdfNotas('');
+    setOdfUrl('');
     setOdfEditandoId(null);
     setOdfError(null);
   }
@@ -1347,6 +1442,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
                 estado: odfEstado,
                 confianza: odfConfianza,
                 notas: odfNotas.trim(),
+                url: odfUrl.trim() || undefined,
               }
             : f
         );
@@ -1359,6 +1455,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
           estado: odfEstado,
           confianza: odfConfianza,
           notas: odfNotas.trim(),
+          url: odfUrl.trim() || undefined,
           fecha_registro: new Date().toISOString(),
         };
         nuevasFuentes = [...fuentesActuales, nueva];
@@ -1381,6 +1478,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
     setOdfEstado(f.estado);
     setOdfConfianza(f.confianza);
     setOdfNotas(f.notas);
+    setOdfUrl(f.url ?? '');
     setOdfError(null);
   }
 
@@ -2665,6 +2763,20 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                     />
                   </div>
 
+                  {/* Chunk 9C (C1): URL libre opcional */}
+                  <div>
+                    <label className="block text-xs font-mono text-davy-gray uppercase tracking-wider mb-2">
+                      URL del documento o referencia <span className="text-davy-gray/50">(opcional)</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={odfUrl}
+                      onChange={(e) => setOdfUrl(e.target.value)}
+                      placeholder="https://... o ruta interna, DOI, citacion de archivo"
+                      className="w-full bg-oxford-blue border border-davy-gray/50 rounded px-3 py-2.5 text-seasalt text-sm placeholder:text-davy-gray/50 focus:outline-none focus:border-amber-brand"
+                    />
+                  </div>
+
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="block text-xs font-mono text-davy-gray uppercase tracking-wider mb-2">
@@ -2785,6 +2897,16 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                               </h4>
                               {f.rol_origen && (
                                 <p className="text-davy-gray text-xs mt-0.5">{f.rol_origen}</p>
+                              )}
+                              {f.url && (
+                                <a
+                                  href={f.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-amber-brand text-xs hover:underline break-all inline-block mt-1"
+                                >
+                                  🔗 {f.url}
+                                </a>
                               )}
                             </div>
                             <div className="flex gap-1 shrink-0">
@@ -3859,13 +3981,19 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
         )}
 
         {/* ── Validaciones de Borrador histórico (fase revision) ── */}
-        {savedValidacionesBorrador.length > 0 && (
+        {savedValidacionesBorrador.length > 0 && (() => {
+          // Chunk 9C (C2): lectura del puntero a la iteracion marcada como definitiva
+          const definitivaId = (project?.data as Record<string, unknown> | undefined)
+            ?.validacion_borrador_definitiva_id as string | undefined;
+          return (
           <section className="bg-space-cadet rounded-lg border border-davy-gray/20 p-6">
             <h2 className="text-seasalt font-semibold mb-4">
               ✅ Validaciones del Borrador ({savedValidacionesBorrador.length})
             </h2>
             <div className="space-y-3">
-              {savedValidacionesBorrador.map((entry, idx) => (
+              {savedValidacionesBorrador.map((entry, idx) => {
+                const esDefinitiva = entry.id === definitivaId;
+                return (
                 <div
                   key={entry.id}
                   className="bg-oxford-blue rounded-lg border border-davy-gray/15 overflow-hidden"
@@ -3880,6 +4008,11 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                       <div className="flex-1 min-w-0">
                         <p className="text-seasalt text-sm">
                           Iteración #{idx + 1}
+                          {esDefinitiva && (
+                            <span className="bg-green-500/20 text-green-400 border border-green-500/40 px-2 py-0.5 rounded text-xs ml-2">
+                              ✅ Definitiva
+                            </span>
+                          )}
                           {entry.validado_en && (
                             <span className="text-davy-gray text-xs ml-2">
                               · {new Date(entry.validado_en).toLocaleString('es-CL')}
@@ -3919,13 +4052,34 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                         <p className="text-seasalt/80 text-sm mb-3">{entry.resumen}</p>
                       )}
                       {renderDimensions(entry.evaluacion)}
+                      {/* Chunk 9C (C2): acciones de curacion del historial */}
+                      <div className="flex flex-wrap gap-2 mt-4 pt-4 border-t border-davy-gray/30">
+                        {!esDefinitiva && (
+                          <button
+                            type="button"
+                            onClick={() => handleMarcarValidacionDefinitiva(entry.id)}
+                            className="bg-green-500/20 hover:bg-green-500/30 text-green-400 border border-green-500/40 text-xs px-3 py-1.5 rounded transition-colors"
+                          >
+                            ✅ Marcar como definitiva
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => handleEliminarValidacionBorrador(entry.id)}
+                          className="bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/40 text-xs px-3 py-1.5 rounded transition-colors"
+                        >
+                          🗑️ Eliminar
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           </section>
-        )}
+          );
+        })()}
 
         {/* ── Validación de Tono legacy (retrocompat — solo lectura) ── */}
         {savedValidacionLegacy && (
