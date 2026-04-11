@@ -262,6 +262,94 @@ export async function PATCH(
       updates.data = { ...currentData, ...body.data };
     }
 
+    // ── Auto-promoción VHP → ODF (transición validacion → pesquisa) ──
+    // Cuando el operador avanza de validacion a pesquisa, recorremos
+    // data.validaciones_hipotesis[] y promovemos a data.fuentes[] cada
+    // validación con veredicto viable o viable_con_reservas que aún no
+    // haya sido promovida. Las marcamos con promovida_a_fuente = true.
+    let fuentesPromovidasCount = 0;
+    if (
+      body.action === 'advance' &&
+      (project.status as PipelineStatus) === 'validacion'
+    ) {
+      // Trabajamos sobre el data ya mergeado, si existe; si no, sobre el actual
+      const baseData =
+        (updates.data as Record<string, unknown> | undefined) ??
+        ((project.data as Record<string, unknown>) ?? {});
+
+      const validaciones = Array.isArray(baseData.validaciones_hipotesis)
+        ? (baseData.validaciones_hipotesis as Array<Record<string, unknown>>)
+        : [];
+
+      const fuentesActuales = Array.isArray(baseData.fuentes)
+        ? (baseData.fuentes as Array<Record<string, unknown>>)
+        : [];
+
+      if (validaciones.length > 0) {
+        const nuevasFuentes: Array<Record<string, unknown>> = [];
+
+        const validacionesActualizadas = validaciones.map((v) => {
+          if (v.promovida_a_fuente === true) return v;
+
+          const ai = (v.ai_response as Record<string, unknown>) ?? {};
+          const veredicto = String(ai.veredicto ?? '');
+          const esViable =
+            veredicto === 'viable' || veredicto === 'viable_con_reservas';
+          if (!esViable) return v;
+
+          const lead = (v.lead_input as Record<string, unknown>) ?? {};
+          const tipoLeadRaw = String(lead.tipo ?? '');
+          const tipoFuente: 'persona' | 'documento' | 'dato' | 'testimonio' =
+            tipoLeadRaw === 'persona'
+              ? 'persona'
+              : tipoLeadRaw === 'documento'
+                ? 'documento'
+                : tipoLeadRaw === 'dato_publico'
+                  ? 'dato'
+                  : tipoLeadRaw === 'testimonio'
+                    ? 'testimonio'
+                    : 'documento';
+
+          const confianzaFuente: 'baja' | 'media' | 'alta' =
+            veredicto === 'viable' ? 'alta' : 'media';
+
+          const descripcion = String(lead.descripcion ?? '').trim();
+          const acceso = String(lead.acceso ?? '');
+          const nombreCorto =
+            descripcion.length > 120
+              ? descripcion.slice(0, 117).trim() + '...'
+              : descripcion || 'Lead promovido desde VHP';
+
+          const validacionId = typeof v.id === 'string' ? v.id : '';
+
+          const nuevaFuente: Record<string, unknown> = {
+            id: globalThis.crypto.randomUUID(),
+            tipo: tipoFuente,
+            nombre_titulo: nombreCorto,
+            rol_origen: `Promovido desde VHP — acceso ${acceso || 'no declarado'}`,
+            estado: 'por_contactar',
+            confianza: confianzaFuente,
+            notas: String(lead.notas ?? ''),
+            fecha_registro: new Date().toISOString(),
+            origen: 'vhp',
+            origen_validacion_id: validacionId,
+          };
+
+          nuevasFuentes.push(nuevaFuente);
+          return { ...v, promovida_a_fuente: true };
+        });
+
+        if (nuevasFuentes.length > 0) {
+          fuentesPromovidasCount = nuevasFuentes.length;
+          updates.data = {
+            ...baseData,
+            validaciones_hipotesis: validacionesActualizadas,
+            fuentes: [...fuentesActuales, ...nuevasFuentes],
+          };
+        }
+      }
+    }
+
     // Ejecutar update
     const [updated] = await db
       .update(projects)
@@ -286,6 +374,7 @@ export async function PATCH(
         pipelineIndex: PIPELINE_ORDER.indexOf(updated.status as PipelineStatus),
         pipelineTotal: PIPELINE_ORDER.length,
       },
+      fuentes_promovidas_count: fuentesPromovidasCount,
     });
   } catch (error) {
     console.error('[PATCH /api/projects/[id]] Error:', error);

@@ -50,7 +50,12 @@ function validateBody(body: unknown): body is GenerateRequest {
 }
 
 // ── Herramientas válidas ─────────────────────────────
-const VALID_TOOLS: ToolName[] = ['generador_angulos', 'validador_tono', 'constructor_pitch'];
+const VALID_TOOLS: ToolName[] = [
+  'generador_angulos',
+  'validador_tono',
+  'constructor_pitch',
+  'validador_hipotesis_pista',
+];
 
 // ── Handler ──────────────────────────────────────────
 export async function POST(request: NextRequest) {

@@ -121,6 +121,47 @@ interface Fuente {
   confianza: 'baja' | 'media' | 'alta';
   notas: string;
   fecha_registro: string;
+  // Trazabilidad: cuando una fuente fue auto-promovida desde el VHP (Chunk 7B)
+  origen?: 'manual' | 'vhp';
+  origen_validacion_id?: string;
+}
+
+// Validador de Hipótesis y Pista (VHP) — Chunk 7B
+type LeadTipo = 'persona' | 'documento' | 'dato_publico' | 'testimonio' | 'otro';
+type LeadAcceso = 'confirmado' | 'probable' | 'especulativo';
+type VhpVeredicto = 'viable' | 'viable_con_reservas' | 'no_viable';
+
+interface HipotesisSnapshot {
+  titulo: string;
+  gancho: string;
+  pregunta_clave: string;
+  verificaciones_criticas: string[];
+  evidencia_requerida: string;
+}
+
+interface LeadInput {
+  tipo: LeadTipo;
+  descripcion: string;
+  acceso: LeadAcceso;
+  notas: string;
+}
+
+interface VhpAiResponse {
+  viabilidad_score: number;
+  veredicto: VhpVeredicto;
+  fortalezas: string[];
+  riesgos: string[];
+  recomendaciones: string[];
+  preguntas_clave: string[];
+}
+
+interface ValidacionHipotesisEntry {
+  id: string;
+  fecha_validacion: string;
+  hipotesis_snapshot: HipotesisSnapshot;
+  lead_input: LeadInput;
+  ai_response: VhpAiResponse;
+  promovida_a_fuente: boolean;
 }
 
 // Legacy (retrocompat — Chunks 4-5)
@@ -163,7 +204,7 @@ interface TemplateOption {
   reviewLevel: string;
 }
 
-type ActiveTool = 'hipotesis' | 'odf' | 'pitch' | 'radar' | 'validador';
+type ActiveTool = 'hipotesis' | 'vhp' | 'odf' | 'pitch' | 'radar' | 'validador';
 
 interface PhaseConfig {
   tabs: { key: ActiveTool; label: string }[];
@@ -250,6 +291,33 @@ const FUENTE_CONFIANZA_COLORS: Record<string, string> = {
   alta: 'bg-green-500/20 text-green-400 border-green-500/40',
 };
 
+// Validador de Hipótesis y Pista (Chunk 7B)
+const LEAD_TIPO_LABELS: Record<LeadTipo, string> = {
+  persona: '👤 Persona',
+  documento: '📄 Documento',
+  dato_publico: '📊 Dato público',
+  testimonio: '🗣️ Testimonio',
+  otro: '🔗 Otro',
+};
+
+const LEAD_ACCESO_LABELS: Record<LeadAcceso, string> = {
+  confirmado: 'Confirmado',
+  probable: 'Probable',
+  especulativo: 'Especulativo',
+};
+
+const LEAD_ACCESO_COLORS: Record<LeadAcceso, string> = {
+  confirmado: 'bg-green-500/20 text-green-400 border-green-500/40',
+  probable: 'bg-amber-brand/20 text-amber-brand border-amber-brand/40',
+  especulativo: 'bg-red-500/20 text-red-400 border-red-500/40',
+};
+
+const VHP_VEREDICTO_LABELS: Record<VhpVeredicto, { label: string; color: string }> = {
+  viable: { label: '✅ Viable', color: 'text-green-400' },
+  viable_con_reservas: { label: '⚠️ Viable con reservas', color: 'text-amber-brand' },
+  no_viable: { label: '❌ No viable', color: 'text-red-400' },
+};
+
 const VEREDICTO_LABELS: Record<string, { label: string; color: string }> = {
   publicable: { label: '✅ Publicable', color: 'text-green-400' },
   publicable_con_cambios: { label: '⚠️ Publicable con cambios', color: 'text-amber-brand' },
@@ -270,7 +338,10 @@ const PHASE_CONFIG: Record<string, PhaseConfig> = {
     info: 'Borrador recién creado. Avanzá a Validación para generar hipótesis de investigación.',
   },
   validacion: {
-    tabs: [{ key: 'hipotesis', label: '🔬 Generador de Hipótesis' }],
+    tabs: [
+      { key: 'hipotesis', label: '🔬 Generador de Hipótesis' },
+      { key: 'vhp', label: '🧪 Validador de Hipótesis y Pista' },
+    ],
   },
   pesquisa: {
     tabs: [
@@ -364,6 +435,10 @@ function parseFuenteFromRaw(f: Record<string, unknown>): Fuente {
       ? confianzaRaw
       : 'media';
 
+  const origenRaw = String(f.origen ?? '');
+  const origen: Fuente['origen'] | undefined =
+    origenRaw === 'manual' || origenRaw === 'vhp' ? origenRaw : undefined;
+
   return {
     id: typeof f.id === 'string' && f.id ? f.id : genId(),
     tipo,
@@ -376,6 +451,71 @@ function parseFuenteFromRaw(f: Record<string, unknown>): Fuente {
       typeof f.fecha_registro === 'string' && f.fecha_registro
         ? f.fecha_registro
         : new Date().toISOString(),
+    origen,
+    origen_validacion_id:
+      typeof f.origen_validacion_id === 'string' ? f.origen_validacion_id : undefined,
+  };
+}
+
+function parseValidacionHipotesisFromRaw(
+  v: Record<string, unknown>
+): ValidacionHipotesisEntry {
+  const snapRaw = (v.hipotesis_snapshot as Record<string, unknown>) ?? {};
+  const leadRaw = (v.lead_input as Record<string, unknown>) ?? {};
+  const aiRaw = (v.ai_response as Record<string, unknown>) ?? {};
+
+  const tipoLeadRaw = String(leadRaw.tipo ?? '');
+  const tipoLead: LeadTipo =
+    tipoLeadRaw === 'persona' ||
+    tipoLeadRaw === 'documento' ||
+    tipoLeadRaw === 'dato_publico' ||
+    tipoLeadRaw === 'testimonio' ||
+    tipoLeadRaw === 'otro'
+      ? tipoLeadRaw
+      : 'otro';
+
+  const accesoRaw = String(leadRaw.acceso ?? '');
+  const acceso: LeadAcceso =
+    accesoRaw === 'confirmado' || accesoRaw === 'probable' || accesoRaw === 'especulativo'
+      ? accesoRaw
+      : 'especulativo';
+
+  const veredictoRaw = String(aiRaw.veredicto ?? '');
+  const veredicto: VhpVeredicto =
+    veredictoRaw === 'viable' ||
+    veredictoRaw === 'viable_con_reservas' ||
+    veredictoRaw === 'no_viable'
+      ? veredictoRaw
+      : 'no_viable';
+
+  const toStringArr = (x: unknown): string[] =>
+    Array.isArray(x) ? (x as unknown[]).map(String) : [];
+
+  return {
+    id: typeof v.id === 'string' && v.id ? v.id : genId(),
+    fecha_validacion: String(v.fecha_validacion ?? ''),
+    hipotesis_snapshot: {
+      titulo: String(snapRaw.titulo ?? ''),
+      gancho: String(snapRaw.gancho ?? ''),
+      pregunta_clave: String(snapRaw.pregunta_clave ?? ''),
+      verificaciones_criticas: toStringArr(snapRaw.verificaciones_criticas),
+      evidencia_requerida: String(snapRaw.evidencia_requerida ?? ''),
+    },
+    lead_input: {
+      tipo: tipoLead,
+      descripcion: String(leadRaw.descripcion ?? ''),
+      acceso,
+      notas: String(leadRaw.notas ?? ''),
+    },
+    ai_response: {
+      viabilidad_score: Number(aiRaw.viabilidad_score ?? 0),
+      veredicto,
+      fortalezas: toStringArr(aiRaw.fortalezas),
+      riesgos: toStringArr(aiRaw.riesgos),
+      recomendaciones: toStringArr(aiRaw.recomendaciones),
+      preguntas_clave: toStringArr(aiRaw.preguntas_clave),
+    },
+    promovida_a_fuente: v.promovida_a_fuente === true,
   };
 }
 
@@ -445,6 +585,15 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
   const [validandoBorrador, setValidandoBorrador] = useState(false);
   const [borradorError, setBorradorError] = useState<string | null>(null);
   const [expandedBorrador, setExpandedBorrador] = useState<string | null>(null);
+
+  // Validador de Hipótesis y Pista (VHP) — Chunk 7B
+  const [vhpTipoLead, setVhpTipoLead] = useState<LeadTipo>('documento');
+  const [vhpDescripcion, setVhpDescripcion] = useState('');
+  const [vhpAcceso, setVhpAcceso] = useState<LeadAcceso>('probable');
+  const [vhpNotas, setVhpNotas] = useState('');
+  const [validandoVhp, setValidandoVhp] = useState(false);
+  const [vhpError, setVhpError] = useState<string | null>(null);
+  const [expandedVhp, setExpandedVhp] = useState<string | null>(null);
 
   // Organizador de Fuentes Forenses (ODF) — Chunk 7
   const [odfTipo, setOdfTipo] = useState<Fuente['tipo']>('documento');
@@ -962,6 +1111,144 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
     setOdfError(null);
   }
 
+  // ── Validador de Hipótesis y Pista (VHP) — Chunk 7B ──
+  async function handleValidarHipotesisPista() {
+    if (!project) return;
+    if (!vhpDescripcion.trim()) {
+      setVhpError('La descripción del lead es obligatoria');
+      return;
+    }
+
+    // Necesitamos una hipótesis elegida para correr el validador
+    const elegidaRaw = project.data?.hipotesis_elegida as
+      | Record<string, unknown>
+      | undefined;
+    if (!elegidaRaw || typeof elegidaRaw !== 'object' || !elegidaRaw.titulo) {
+      setVhpError(
+        'Antes de validar una pista, elegí una hipótesis en el Generador de Hipótesis.'
+      );
+      return;
+    }
+
+    setValidandoVhp(true);
+    setVhpError(null);
+
+    try {
+      const elegidaParsed = parseHipotesisFromRaw(elegidaRaw, 0);
+      const snapshot: HipotesisSnapshot = {
+        titulo: elegidaParsed.titulo,
+        gancho: elegidaParsed.gancho,
+        pregunta_clave: elegidaParsed.pregunta_clave,
+        verificaciones_criticas: elegidaParsed.verificaciones_criticas ?? [],
+        evidencia_requerida: elegidaParsed.evidencia_requerida ?? '',
+      };
+
+      const lead: LeadInput = {
+        tipo: vhpTipoLead,
+        descripcion: vhpDescripcion.trim(),
+        acceso: vhpAcceso,
+        notas: vhpNotas.trim(),
+      };
+
+      // Construcción del userMessage para el modelo
+      const verificacionesBlock =
+        snapshot.verificaciones_criticas.length > 0
+          ? snapshot.verificaciones_criticas.map((v, i) => `  ${i + 1}. ${v}`).join('\n')
+          : '  (sin verificaciones críticas declaradas)';
+
+      const userMessage = `HIPÓTESIS ELEGIDA
+─────────────────
+Título: ${snapshot.titulo}
+Gancho: ${snapshot.gancho || '(sin gancho)'}
+Pregunta clave: ${snapshot.pregunta_clave || '(sin pregunta clave)'}
+Verificaciones críticas:
+${verificacionesBlock}
+Evidencia requerida: ${snapshot.evidencia_requerida || '(no declarada)'}
+
+LEAD PROPUESTO POR EL OPERADOR
+──────────────────────────────
+Tipo: ${lead.tipo}
+Nivel de acceso declarado: ${lead.acceso}
+Descripción: ${lead.descripcion}
+Notas adicionales: ${lead.notas || '(sin notas)'}`;
+
+      const genBody: Record<string, unknown> = {
+        tool: 'validador_hipotesis_pista',
+        userMessage,
+        projectId: project.id,
+      };
+      if (project.hasTenant && project.tenantSlug && project.templateSlug) {
+        genBody.tenantSlug = project.tenantSlug;
+        genBody.templateSlug = project.templateSlug;
+      }
+
+      const res = await fetch('/api/ai/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(genBody),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Error validando hipótesis y pista');
+
+      const result = (json.result ?? {}) as Record<string, unknown>;
+      const veredictoRaw = String(result.veredicto ?? '');
+      const veredicto: VhpVeredicto =
+        veredictoRaw === 'viable' ||
+        veredictoRaw === 'viable_con_reservas' ||
+        veredictoRaw === 'no_viable'
+          ? veredictoRaw
+          : 'no_viable';
+
+      const toStringArr = (x: unknown): string[] =>
+        Array.isArray(x) ? (x as unknown[]).map(String) : [];
+
+      const aiResponse: VhpAiResponse = {
+        viabilidad_score: Number(result.viabilidad_score ?? 0),
+        veredicto,
+        fortalezas: toStringArr(result.fortalezas),
+        riesgos: toStringArr(result.riesgos),
+        recomendaciones: toStringArr(result.recomendaciones),
+        preguntas_clave: toStringArr(result.preguntas_clave),
+      };
+
+      const entry: ValidacionHipotesisEntry = {
+        id: genId(),
+        fecha_validacion: new Date().toISOString(),
+        hipotesis_snapshot: snapshot,
+        lead_input: lead,
+        ai_response: aiResponse,
+        promovida_a_fuente: false,
+      };
+
+      const currentRaw = project.data?.validaciones_hipotesis;
+      const current: ValidacionHipotesisEntry[] = Array.isArray(currentRaw)
+        ? (currentRaw as unknown[]).map((v) =>
+            parseValidacionHipotesisFromRaw(v as Record<string, unknown>)
+          )
+        : [];
+      const next = [...current, entry];
+
+      const patchRes = await fetch(`/api/projects/${project.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: { validaciones_hipotesis: next } }),
+      });
+      if (!patchRes.ok) {
+        const pj = await patchRes.json();
+        throw new Error(pj.error || 'Error guardando validación VHP');
+      }
+
+      // Limpiar form de lead (la descripción es lo único largo)
+      setVhpDescripcion('');
+      setVhpNotas('');
+      await fetchProject();
+    } catch (err) {
+      setVhpError(err instanceof Error ? err.message : 'Error desconocido');
+    } finally {
+      setValidandoVhp(false);
+    }
+  }
+
   async function handleEliminarFuente(id: string) {
     if (!project) return;
     const fuentesActuales: Fuente[] = Array.isArray(project.data?.fuentes)
@@ -1089,6 +1376,15 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
   const currentFuentes: Fuente[] = Array.isArray(project.data?.fuentes)
     ? (project.data.fuentes as unknown[]).map((f) =>
         parseFuenteFromRaw(f as Record<string, unknown>)
+      )
+    : [];
+
+  // ── Validaciones VHP (Chunk 7B, retrocompat: proyectos viejos no tienen data.validaciones_hipotesis) ──
+  const savedVhp: ValidacionHipotesisEntry[] = Array.isArray(
+    project.data?.validaciones_hipotesis
+  )
+    ? (project.data.validaciones_hipotesis as unknown[]).map((v) =>
+        parseValidacionHipotesisFromRaw(v as Record<string, unknown>)
       )
     : [];
 
@@ -1835,6 +2131,170 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
                 </div>
               )}
 
+            {/* ── TAB: Validador de Hipótesis y Pista (fase validacion) — Chunk 7B ── */}
+            {activeTool === 'vhp' && phaseConfig.tabs.some((t) => t.key === 'vhp') && (
+              <div className="space-y-5">
+                <div>
+                  <h2 className="text-seasalt font-bold text-lg mb-1">
+                    🧪 Validador de Hipótesis y Pista
+                  </h2>
+                  <p className="text-davy-gray text-sm">
+                    Evaluá si un lead concreto que tenés a mano (una persona, un documento,
+                    un dato, un testimonio) tiene capacidad real de sostener o refutar la
+                    hipótesis elegida. El validador NO genera hipótesis nuevas: te dice si
+                    avanzar con esa pista es viable, viable con reservas o no viable.
+                  </p>
+                </div>
+
+                {!savedHipotesisElegida && (
+                  <div className="bg-amber-brand/15 border border-amber-brand/40 rounded-lg p-4">
+                    <p className="text-amber-brand text-sm">
+                      Primero elegí una hipótesis en el tab <strong>🔬 Generador de Hipótesis</strong>.
+                      El VHP necesita una hipótesis elegida para evaluar el match con tu lead.
+                    </p>
+                  </div>
+                )}
+
+                {savedHipotesisElegida && (
+                  <>
+                    {/* Snapshot de la hipótesis elegida (read-only) */}
+                    <div className="bg-oxford-blue border border-amber-brand/30 rounded-lg p-4">
+                      <p className="text-xs uppercase tracking-wider text-amber-brand font-semibold mb-2">
+                        ⭐ Hipótesis elegida (snapshot)
+                      </p>
+                      <h3 className="text-seasalt font-medium text-sm mb-2">
+                        {savedHipotesisElegida.titulo}
+                      </h3>
+                      {savedHipotesisElegida.pregunta_clave && (
+                        <p className="text-davy-gray text-xs mb-1">
+                          <span className="text-blue-400/80">Pregunta clave:</span>{' '}
+                          {savedHipotesisElegida.pregunta_clave}
+                        </p>
+                      )}
+                      {savedHipotesisElegida.verificaciones_criticas &&
+                        savedHipotesisElegida.verificaciones_criticas.length > 0 && (
+                          <div className="mt-2">
+                            <p className="text-xs text-blue-400 font-semibold mb-1">
+                              🔍 Verificaciones críticas
+                            </p>
+                            <ul className="text-xs text-seasalt/80 space-y-0.5 list-disc list-inside">
+                              {savedHipotesisElegida.verificaciones_criticas.map((v, i) => (
+                                <li key={i}>{v}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                    </div>
+
+                    {/* Formulario de lead */}
+                    <div className="bg-space-cadet rounded-lg border border-davy-gray/30 p-5 space-y-4">
+                      <h3 className="text-amber-brand font-semibold text-sm">
+                        Lead concreto a evaluar
+                      </h3>
+
+                      <div>
+                        <label className="block text-xs font-mono text-davy-gray uppercase tracking-wider mb-2">
+                          Tipo de lead
+                        </label>
+                        <select
+                          value={vhpTipoLead}
+                          onChange={(e) => setVhpTipoLead(e.target.value as LeadTipo)}
+                          className="w-full bg-oxford-blue border border-davy-gray/50 rounded px-3 py-2.5 text-seasalt text-sm focus:outline-none focus:border-amber-brand"
+                        >
+                          {(Object.keys(LEAD_TIPO_LABELS) as LeadTipo[]).map((k) => (
+                            <option key={k} value={k}>
+                              {LEAD_TIPO_LABELS[k]}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-mono text-davy-gray uppercase tracking-wider mb-2">
+                          Descripción del lead <span className="text-red-400">*</span>
+                        </label>
+                        <textarea
+                          value={vhpDescripcion}
+                          onChange={(e) => setVhpDescripcion(e.target.value)}
+                          rows={3}
+                          maxLength={2000}
+                          placeholder="¿Qué es concretamente este lead? Ej: 'Ex-funcionaria de Subsecretaría de Salud Pública 2018-2022, dispuesta a hablar off-the-record sobre la implementación del programa X'"
+                          className="w-full bg-oxford-blue border border-davy-gray/50 rounded px-3 py-2.5 text-seasalt text-sm placeholder:text-davy-gray/50 focus:outline-none focus:border-amber-brand resize-y"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-mono text-davy-gray uppercase tracking-wider mb-2">
+                          Nivel de acceso declarado
+                        </label>
+                        <div className="grid grid-cols-3 gap-2">
+                          {(Object.keys(LEAD_ACCESO_LABELS) as LeadAcceso[]).map((k) => (
+                            <button
+                              key={k}
+                              type="button"
+                              onClick={() => setVhpAcceso(k)}
+                              className={`py-2 px-3 rounded text-xs font-medium border transition-colors ${
+                                vhpAcceso === k
+                                  ? LEAD_ACCESO_COLORS[k]
+                                  : 'bg-oxford-blue border-davy-gray/30 text-davy-gray hover:text-seasalt'
+                              }`}
+                            >
+                              {LEAD_ACCESO_LABELS[k]}
+                            </button>
+                          ))}
+                        </div>
+                        <p className="text-xs text-davy-gray/70 mt-2 leading-relaxed">
+                          <strong className="text-davy-gray">Confirmado</strong>: ya hablaste/ya
+                          tenés el documento. <strong className="text-davy-gray">Probable</strong>:
+                          contacto realista pendiente.{' '}
+                          <strong className="text-davy-gray">Especulativo</strong>: idea sin
+                          garantía de acceso.
+                        </p>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-mono text-davy-gray uppercase tracking-wider mb-2">
+                          Notas <span className="text-davy-gray/50">(opcional)</span>
+                        </label>
+                        <textarea
+                          value={vhpNotas}
+                          onChange={(e) => setVhpNotas(e.target.value)}
+                          rows={2}
+                          maxLength={1000}
+                          placeholder="Contexto adicional, riesgos conocidos, plazo..."
+                          className="w-full bg-oxford-blue border border-davy-gray/50 rounded px-3 py-2.5 text-seasalt text-sm placeholder:text-davy-gray/50 focus:outline-none focus:border-amber-brand resize-y"
+                        />
+                      </div>
+
+                      <button
+                        onClick={handleValidarHipotesisPista}
+                        disabled={validandoVhp || !vhpDescripcion.trim()}
+                        className={`w-full py-3 rounded font-bold text-sm transition-all ${
+                          validandoVhp || !vhpDescripcion.trim()
+                            ? 'bg-davy-gray/30 text-davy-gray cursor-not-allowed'
+                            : 'bg-amber-brand text-oxford-blue hover:bg-amber-brand/90 active:scale-[0.99]'
+                        }`}
+                      >
+                        {validandoVhp ? 'Evaluando viabilidad…' : '🧪 Validar lead contra hipótesis'}
+                      </button>
+
+                      {vhpError && (
+                        <div className="bg-red-900/20 border border-red-700 rounded p-3">
+                          <p className="text-red-400 text-sm">{vhpError}</p>
+                        </div>
+                      )}
+                    </div>
+
+                    <p className="text-xs text-davy-gray/70 italic">
+                      Las validaciones con veredicto <strong>viable</strong> o{' '}
+                      <strong>viable con reservas</strong> se promueven automáticamente al
+                      Organizador de Fuentes (ODF) cuando avancés a la fase de Pesquisa.
+                    </p>
+                  </>
+                )}
+              </div>
+            )}
+
             {/* ── TAB: Organizador de Fuentes Forenses (fase pesquisa) — Chunk 7 ── */}
             {activeTool === 'odf' && phaseConfig.tabs.some((t) => t.key === 'odf') && (
               <section className="space-y-6">
@@ -2298,6 +2758,166 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
                 <p className="text-seasalt/80 text-sm">{savedHipotesis.notaEditorial}</p>
               </div>
             )}
+          </section>
+        )}
+
+        {/* ── Validaciones VHP histórico (Chunk 7B) ── */}
+        {savedVhp.length > 0 && (
+          <section className="bg-space-cadet rounded-lg border border-davy-gray/20 p-6">
+            <h2 className="text-seasalt font-semibold mb-4">
+              🧪 Validaciones de Hipótesis y Pista ({savedVhp.length})
+            </h2>
+            <div className="space-y-3">
+              {savedVhp.map((entry, idx) => {
+                const verCfg =
+                  VHP_VEREDICTO_LABELS[entry.ai_response.veredicto] ?? {
+                    label: entry.ai_response.veredicto,
+                    color: 'text-davy-gray',
+                  };
+                return (
+                  <div
+                    key={entry.id}
+                    className="bg-oxford-blue rounded-lg border border-davy-gray/15 overflow-hidden"
+                  >
+                    <button
+                      onClick={() =>
+                        setExpandedVhp(expandedVhp === entry.id ? null : entry.id)
+                      }
+                      className="w-full p-4 text-left hover:bg-davy-gray/5 transition-colors"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1 flex-wrap">
+                            <span className="text-seasalt text-sm font-medium">
+                              Iteración #{idx + 1}
+                            </span>
+                            <span className="text-xs text-davy-gray">
+                              {LEAD_TIPO_LABELS[entry.lead_input.tipo] ?? entry.lead_input.tipo}
+                            </span>
+                            <span
+                              className={`text-[10px] px-2 py-0.5 rounded border ${
+                                LEAD_ACCESO_COLORS[entry.lead_input.acceso] ?? ''
+                              }`}
+                            >
+                              Acceso: {LEAD_ACCESO_LABELS[entry.lead_input.acceso]}
+                            </span>
+                            {entry.promovida_a_fuente && (
+                              <span className="text-[10px] px-2 py-0.5 rounded border border-green-500/40 bg-green-500/10 text-green-400">
+                                🗂️ Promovida al ODF
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-davy-gray/80 italic truncate">
+                            «{entry.lead_input.descripcion}»
+                          </p>
+                          {entry.fecha_validacion && (
+                            <p className="text-xs text-davy-gray/60 mt-0.5">
+                              {new Date(entry.fecha_validacion).toLocaleString('es-CL')}
+                            </p>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-3 flex-shrink-0">
+                          <span className={`font-bold ${verCfg.color}`}>
+                            {entry.ai_response.viabilidad_score}/100
+                          </span>
+                          <span className={`text-xs ${verCfg.color}`}>{verCfg.label}</span>
+                          <span className="text-davy-gray text-xs">
+                            {expandedVhp === entry.id ? '▾' : '▸'}
+                          </span>
+                        </div>
+                      </div>
+                    </button>
+                    {expandedVhp === entry.id && (
+                      <div className="px-4 pb-4 border-t border-davy-gray/15 pt-3 space-y-4">
+                        {/* Hipótesis snapshot */}
+                        <div className="bg-space-cadet/60 border border-amber-brand/20 rounded p-3">
+                          <p className="text-[10px] uppercase tracking-wider text-amber-brand font-semibold mb-1">
+                            Hipótesis evaluada
+                          </p>
+                          <p className="text-seasalt text-sm">
+                            {entry.hipotesis_snapshot.titulo}
+                          </p>
+                          {entry.hipotesis_snapshot.pregunta_clave && (
+                            <p className="text-davy-gray text-xs mt-1">
+                              <span className="text-blue-400/80">Pregunta clave:</span>{' '}
+                              {entry.hipotesis_snapshot.pregunta_clave}
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Lead completo */}
+                        {entry.lead_input.notas && (
+                          <div>
+                            <p className="text-[10px] uppercase tracking-wider text-davy-gray font-semibold mb-1">
+                              Notas del operador
+                            </p>
+                            <p className="text-seasalt/80 text-xs italic">
+                              {entry.lead_input.notas}
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Fortalezas */}
+                        {entry.ai_response.fortalezas.length > 0 && (
+                          <div>
+                            <p className="text-[10px] uppercase tracking-wider text-green-400 font-semibold mb-1">
+                              ✅ Fortalezas
+                            </p>
+                            <ul className="space-y-1 list-disc list-inside text-sm text-seasalt/80">
+                              {entry.ai_response.fortalezas.map((f, i) => (
+                                <li key={i}>{f}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {/* Riesgos */}
+                        {entry.ai_response.riesgos.length > 0 && (
+                          <div>
+                            <p className="text-[10px] uppercase tracking-wider text-red-400 font-semibold mb-1">
+                              ⚠️ Riesgos
+                            </p>
+                            <ul className="space-y-1 list-disc list-inside text-sm text-seasalt/80">
+                              {entry.ai_response.riesgos.map((r, i) => (
+                                <li key={i}>{r}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {/* Recomendaciones */}
+                        {entry.ai_response.recomendaciones.length > 0 && (
+                          <div>
+                            <p className="text-[10px] uppercase tracking-wider text-amber-brand font-semibold mb-1">
+                              🛠️ Recomendaciones operativas
+                            </p>
+                            <ul className="space-y-1 list-disc list-inside text-sm text-seasalt/80">
+                              {entry.ai_response.recomendaciones.map((r, i) => (
+                                <li key={i}>{r}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {/* Preguntas clave */}
+                        {entry.ai_response.preguntas_clave.length > 0 && (
+                          <div>
+                            <p className="text-[10px] uppercase tracking-wider text-blue-400 font-semibold mb-1">
+                              ❓ Preguntas clave para el lead
+                            </p>
+                            <ul className="space-y-1 list-disc list-inside text-sm text-seasalt/80">
+                              {entry.ai_response.preguntas_clave.map((q, i) => (
+                                <li key={i}>{q}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </section>
         )}
 
