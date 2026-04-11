@@ -177,6 +177,44 @@ Trivial to resolve in Chunk 9: add a secondary button below the message bound to
 - The brand-alignment layer in the MetricPress VHP prompt was implemented as injected findings inside `riesgos` and `recomendaciones` rather than as a new JSON key, keeping the IP and MP contracts identical and simplifying the frontend parser. Guardrail "brand context cannot inflate the score" is explicit in the prompt.
 - Orden de tabs in fase `pesquisa` shipped as `[odf, pitch, radar]` — ODF first, to match the mental model that `pesquisa` logically starts by cataloging sources.
 
+## Hallazgos de validacion — Chunk 8 (11 abril 2026)
+
+End-to-end validation in production of the Generador de Borrador, the main tool of the `produccion` phase. Built and shipped in three sub-chunks (8A backend, 8B-1 frontend wiring, 8B-2 frontend UI) over a single operator session, then validated against a real (non-synthetic) project running the full pipeline draft -> validacion -> pesquisa -> traspaso -> produccion -> visual, including the regenerate cycle and the copy-to-clipboard + advance-to-visual actions. Everything works as designed. Three findings of minor scope surfaced during validation, none of them bugs in Chunk 8 code — they are scope revelations and refinements for future iteration.
+
+### a) Borrador length self-limits below the declared range when evidence is sparse
+
+The MP prompt for `generador_borrador` declares an extension range per template family (prensa 800-2000 words, opinion 500-900, institucional 1500-3500, academico 2000-4500). During the smoke test of Chunk 8A with a synthetic project that had only 2 ODF sources (one contactada with thin notes, one por_contactar) and zero resolved verificaciones criticas, the model produced a 487-word draft for a `reportaje-profundidad` (familia prensa). The minimum of the declared range is 800.
+
+This is NOT a bug. It is the model correctly subordinating the extension rule to the anti-fabrication rule (which is rule #1 of the prompt): with only 2 thin sources and zero resolved checks, generating 1500 words would have required inflation, speculation or interpretation beyond the documented evidence. The 487-word output is dense in documented evidence and honest in `[VERIFICAR]` warnings. Anti-fabrication is preserved.
+
+The refinement for Chunk 9 is to make the subordination explicit in the prompt. Add a note to the extension rule along the lines of: "the word range is a target, not a hard requirement. If the expediente has sparse documented evidence, the borrador can fall below the minimum of the range. It is preferable to ship a short and honest borrador than a long and speculative one. When the extension falls below the range, mention it explicitly in `notas_editoriales` and explain why."
+
+This gives the model explicit permission to do what it already does correctly, and it forces the decision to be logged in the editorial notes for the operator's review.
+
+### b) Operator notes textarea is not persisted between regenerations
+
+The form of the Generador de Borrador exposes a textarea where the operator can write additional notes that get injected into the `userMessage`. Currently the textarea is bound to the local React state `borradorOperadorNotas` (Chunk 8B-1), which lives only in component memory: if the operator regenerates the borrador, the notes are sent again with the new request, but if the operator navigates away from the tab and comes back (or refreshes the page), the textarea is empty even though the previous borrador may have been generated using those notes.
+
+The persisted `data.borrador` does carry the `notasOperador` field in its payload, but the form does NOT prefill the textarea from `data.borrador.notasOperador` on mount. As a result, the operator loses the context of which notes shaped the existing borrador.
+
+Proposed fix for Chunk 9 (trivial): on mount of the borrador tab, if `data.borrador?.notasOperador` exists and the local state is still empty, prefill the textarea with that value. This is the same prefill pattern that the Constructor de Pitch already uses with `hipotesis_elegida`.
+
+### c) "Copiar al portapapeles" uses navigator.clipboard with no graceful degradation in non-secure contexts
+
+The Copiar button in the Chunk 8B-2 UI calls `navigator.clipboard.writeText` and shows a generic `alert()` on failure. In production over HTTPS this works. But the API is gated to secure contexts and a few corner cases can break it: iframes without the clipboard-write permission, browsers with the API disabled by user policy, or older mobile browsers. The current fallback is "alert and tell the operator to copy manually from the panel" — which is correct in spirit but offers no actual mechanism to copy from the panel without a manual text selection.
+
+Not a Chunk 8 bug. The decision to use `navigator.clipboard` as the primary path is correct (it is the modern API and 99% of cases will work). The refinement for Chunk 9 is to add a hidden `<textarea>` that holds the plain-text version of the borrador and, on copy failure, focus + select that textarea so the operator can use Ctrl+C as a one-keystroke fallback. Five lines of JSX.
+
+### Notes on the successful validation run
+
+- The full flow draft -> validacion -> pesquisa -> traspaso -> produccion -> visual was exercised end-to-end with a real (non-synthetic) project. The Generador de Borrador rendered the contexto del expediente panel correctly, the form button labels and disabled states reflected the soft gate matrix (postura C: hipotesis hard-block, fuentes warning), the regenerate cycle dispatched the confirm dialog, the copy-to-clipboard pasted plain text without metadata or markdown contamination, and the avanzar-a-visual button moved the project to the next phase via `handlePipelineAction('advance')` without breaking the pipeline state.
+- Decision Architectural A held in production: the borrador was generated exclusively from `hipotesis_elegida` + `fuentes` (ODF) + `validacion_hipotesis_pista` (VHP) + `validaciones_borrador` (iterations) + `notasOperador` + `tenant` + `template`. The `data.pitch` is never read by the handler. No brand-voice drift was observed during the validation, confirming that the pitch had no business contaminating the borrador and that the architectural separation is operationally sound.
+- The hard-block on `hipotesis_elegida` was visually verified by retreating the project to validacion, clearing the elected hypothesis with "Cambiar eleccion", and re-advancing to produccion: the borrador tab correctly rendered the red block "Falta elegir una hipotesis" and disabled the generate button.
+- The MP-only hard-block of the endpoint (Chunk 8A) was indirectly validated: the frontend handler always sends `tenantSlug + templateSlug` because the traspaso gate guarantees they exist in fase produccion, so the 400 error path on the endpoint is unreachable from the UI. It remains as defense-in-depth for direct API consumers (curl, future MCP clients, integration tests).
+- The `genBorradorError` namespace separation (Chunk 8B-1) prevented a name collision with the preexisting `borradorError` of the Validador de Tono del Borrador. Both error channels coexist in the same component without interference. This is a pattern worth replicating in future chunks: when a new tool needs an error state and the natural name is already taken by a sibling tool, prefix with the tool family (`gen` for generators, `val` for validators) rather than reusing the channel.
+- Token usage in the smoke test was 4185 input + 1628 output for the synthetic case, which lands at roughly USD 0.04 per generation with Sonnet 4. Real cases with richer expedientes will use more tokens but should remain under USD 0.10 per borrador. Sustainable for the projected volume of 6-8 projects per month.
+- Latency was 27.2 seconds in the smoke test. Acceptable for a one-shot full-draft generation. No need to introduce streaming UI for now.
+
 ## Roadmap
 
 Confirmed chunk ordering after Chunk 6 validation (10 abril 2026). Each chunk should preserve the Chunk 6 retrocompat contract: projects created under older chunks must keep rendering without writes to any of the new `data.*` keys.
@@ -189,15 +227,19 @@ Cerrado en una sola sesion de trabajo, desplegado en produccion en 2 commits:
 
 Hallazgos de validacion: ver seccion "Hallazgos de validacion — Chunk 7 (11 abril 2026)" mas arriba.
 
-### Chunk 8 — Generador de Borrador (next priority)
+### Chunk 8 — Generador de Borrador [COMPLETADO 11 abril 2026]
 
-- New tool in the `produccion` phase (currently a placeholder).
-- Input context: `hipotesis_elegida` + `pitch` + `fuentes` (from ODF) + `radar_editorial` audits + `validaciones_borrador` previous iterations + `thesis` + tenant + template.
-- Output: a full draft in the template's format (Policy Brief, Reportaje, Nota, etc.), respecting the tenant's blindaje rules.
-- **Open design question** to resolve when scoping Chunk 8: how to address the brand–hypothesis dissonance (finding "a" above). Options under evaluation:
-  - **(A)** Ignore the old pitch and generate straight from `hipotesis_elegida` + tenant context.
-  - **(B)** Reinterpret the pitch through the brand lens as a preprocessing step.
-  - **(C)** Force pitch regeneration immediately after the traspaso, before entering `produccion`.
+Cerrado en una sola sesion de trabajo dividida en tres sub-chunks secuenciales, desplegados en produccion y validados visual + funcionalmente end-to-end por el operador:
+
+- `87ce56c` feat(chunk8a): backend del Generador de Borrador. Nueva tool `generador_borrador` en la capa de IA, MetricPress-only (hard-block en `route.ts` si falta tenant + template). Nuevo prompt `buildGeneradorBorradorPromptMP` con regla anti-fabricacion absoluta, regla de citacion de fuentes desde el ODF (no citar fuentes en estado descartada, citar fuentes en estado por_contactar solo como pendientes), regla de iteracion sobre `validaciones_borrador[]` previas, estructura de cuerpo segun `template.family`, y regla de blindaje de marca subordinada al rigor.
+
+- `5fd957d` feat(chunk8b1): cableado del frontend. Tipos `BorradorSeccion / BorradorBody / BorradorMetadata / BorradorData`, parser defensivo `parseBorradorFromRaw`, estado React (`borradorOperadorNotas`, `generandoBorrador`, `genBorradorError` con prefijo de namespace para evitar colision con el `borradorError` del Validador de Tono), handler `handleGenerateBorrador` con soft gate mixto (hipotesis hard-block, fuentes warning confirmable), tab `'borrador'` agregado a `PHASE_CONFIG.produccion`, y placeholder visual con wiring temporal.
+
+- `18a55d6` feat(chunk8b2): UI completa del tab. Panel de contexto del expediente (tarjeta de hipotesis elegida, contadores de fuentes por estado con badges de color, avisos de VHP previas y de iteraciones previas del Validador), form de generacion con textarea de notas opcionales y boton dinamico Generar/Regenerar, panel de resultado con titulo + bajada + lead destacado + cuerpo en secciones + cierre + metadata con badges + listas de verificaciones criticas resueltas/pendientes + advertencias [VERIFICAR] + notas editoriales del modelo, boton "Copiar al portapapeles" en modo texto plano (titulo + bajada + lead + cuerpo + cierre, sin metadata ni markdown), y boton "Avanzar a Visual" que invoca `handlePipelineAction('advance')`.
+
+Decision arquitectonica registrada (Opcion A del open question previo): el Generador de Borrador NO reinterpreta el pitch viejo y NO lee `data.pitch` bajo ninguna circunstancia. El pitch es para editores externos, el borrador es para la audiencia final. Son artefactos con propositos distintos. La validacion en produccion confirmo que la separacion es operativamente sana: ningun brand-voice drift observado.
+
+Hallazgos de validacion: ver seccion "Hallazgos de validacion — Chunk 8 (11 abril 2026)" mas arriba.
 
 ### Chunk 9 — Refinements
 
@@ -210,3 +252,7 @@ Hallazgos de validacion: ver seccion "Hallazgos de validacion — Chunk 7 (11 ab
 - Campo URL libre por fuente en ODF (finding "a1" del Chunk 7) — input opcional de texto, sin infraestructura de storage.
 - Curacion del historial del Validador de Borrador (finding "b" del Chunk 7, preexistente de Chunk 6) — boton "Marcar como definitiva" + boton "Eliminar" por entrada, patron identico al de `hipotesis_elegida`.
 - Boton de navegacion en el placeholder del tab VHP bloqueado (finding "c" del Chunk 7) — secondary button debajo del mensaje que dispare `setActiveTool('hipotesis')`.
+- Refinamiento de la regla de extension del prompt de `generador_borrador` (finding "a" del Chunk 8) — hacer explicito en el prompt MP que el rango de palabras es un objetivo, no un requisito duro. Si el expediente tiene poca evidencia documentada, el borrador puede quedar por debajo del minimo del rango y debe declararlo explicitamente en `notas_editoriales`.
+- Prefill del textarea de notas del operador en el Generador de Borrador (finding "b" del Chunk 8) — al montar el tab, si `data.borrador?.notasOperador` existe y el estado local esta vacio, prefill con ese valor. Patron identico al prefill del Constructor de Pitch desde `hipotesis_elegida`.
+- Fallback de copia al portapapeles en el Generador de Borrador (finding "c" del Chunk 8) — agregar un `<textarea>` oculto con la version texto plano del borrador y, en caso de fallo de `navigator.clipboard.writeText`, focusear y seleccionar ese textarea para que el operador pueda hacer Ctrl+C manualmente.
+- Pipeline puede arrancar sin tesis obligatoria (decision tomada el 11 abril 2026) — modificar el formulario de creacion de project para hacer `thesis` opcional y agregar un placeholder en el detail view tipo "Aun no hay tesis. Genera hipotesis primero, eligi una, y la tesis se infiere de ella". Refleja un flujo de trabajo periodistico real: a veces el operador arranca con un documento o un dato, no con una tesis.
