@@ -154,4 +154,29 @@ CREATE TABLE IF NOT EXISTS consumption_logs (
 
 CREATE INDEX IF NOT EXISTS idx_consumption_tenant ON consumption_logs(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_consumption_created ON consumption_logs(created_at);
+
+-- =====================================================
+-- EDITORES AGENDA (Chunk 10)
+-- =====================================================
+-- Chunk 10: Agenda de Editores (media relations interno)
+CREATE TABLE IF NOT EXISTS editores_agenda (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  nombre TEXT NOT NULL,
+  apellido TEXT NOT NULL,
+  medio TEXT NOT NULL,
+  seccion TEXT,
+  tier INTEGER NOT NULL,
+  tenants_relevantes JSONB NOT NULL DEFAULT '[]'::jsonb,
+  tipo_pieza_recomendado JSONB NOT NULL DEFAULT '[]'::jsonb,
+  email TEXT,
+  telefono TEXT,
+  notas TEXT,
+  ultima_verificacion TIMESTAMP,
+  activo BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_editores_activo ON editores_agenda(activo);
+CREATE INDEX IF NOT EXISTS idx_editores_tier ON editores_agenda(tier);
 `;

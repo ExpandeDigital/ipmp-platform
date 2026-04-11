@@ -217,3 +217,24 @@ export const revisionsRelations = relations(revisions, ({ one }) => ({
   project: one(projects, { fields: [revisions.projectId], references: [projects.id] }),
   reviewer: one(users, { fields: [revisions.reviewerId], references: [users.id] }),
 }));
+
+// =====================================================
+// EDITORES AGENDA (Chunk 10)
+// =====================================================
+export const editoresAgenda = pgTable('editores_agenda', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  nombre: text('nombre').notNull(),
+  apellido: text('apellido').notNull(),
+  medio: text('medio').notNull(),
+  seccion: text('seccion'),
+  tier: integer('tier').notNull(),
+  tenantsRelevantes: jsonb('tenants_relevantes').$type<string[]>().notNull().default([]),
+  tipoPiezaRecomendado: jsonb('tipo_pieza_recomendado').$type<string[]>().notNull().default([]),
+  email: text('email'),
+  telefono: text('telefono'),
+  notas: text('notas'),
+  ultimaVerificacion: timestamp('ultima_verificacion'),
+  activo: boolean('activo').notNull().default(true),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+});
