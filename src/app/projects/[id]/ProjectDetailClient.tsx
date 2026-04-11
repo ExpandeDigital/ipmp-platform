@@ -743,6 +743,21 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project?.data?.hipotesis_elegida]);
 
+  // Chunk 9B (B1): prefill del textarea de notas del operador del Generador de Borrador
+  // desde data.borrador.notasOperador al montar/cambiar el project, si el textarea local
+  // esta vacio. Patron identico al prefill del Constructor de Pitch.
+  useEffect(() => {
+    if (!project) return;
+    const dataObj = (project.data ?? {}) as Record<string, unknown>;
+    const borradorRaw = dataObj.borrador as Record<string, unknown> | undefined;
+    const notasPersistidas =
+      typeof borradorRaw?.notasOperador === 'string' ? borradorRaw.notasOperador : '';
+    if (notasPersistidas && !borradorOperadorNotas.trim()) {
+      setBorradorOperadorNotas(notasPersistidas);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project?.id]);
+
   // ── Cargar config para traspaso ──
   async function loadConfig() {
     try {
@@ -2406,10 +2421,17 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
 
                 {!savedHipotesisElegida && (
                   <div className="bg-amber-brand/15 border border-amber-brand/40 rounded-lg p-4">
-                    <p className="text-amber-brand text-sm">
+                    <p className="text-amber-brand text-sm mb-3">
                       Primero elige una hipótesis en el tab <strong>🔬 Generador de Hipótesis</strong>.
                       El VHP necesita una hipótesis elegida para evaluar el match con tu lead.
                     </p>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTool('hipotesis')}
+                      className="bg-amber-brand hover:bg-amber-brand/90 text-oxford-blue text-sm font-semibold px-4 py-2 rounded transition-colors"
+                    >
+                      ➡️ Ir al Generador de Hipótesis
+                    </button>
                   </div>
                 )}
 
@@ -3209,11 +3231,28 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                   })();
 
                   const handleCopiar = async () => {
+                    // Path moderno: navigator.clipboard.writeText (requiere contexto seguro HTTPS)
                     try {
                       await navigator.clipboard.writeText(textoPlano);
                       alert('Borrador copiado al portapapeles.');
+                      return;
                     } catch {
-                      alert('No se pudo copiar al portapapeles. Copia manualmente desde el panel.');
+                      // Fallback: focusear el textarea oculto y seleccionar su contenido
+                      // para que el operador pueda hacer Ctrl+C manualmente.
+                      const ta = document.getElementById(
+                        'borrador-fallback-textarea'
+                      ) as HTMLTextAreaElement | null;
+                      if (ta) {
+                        ta.focus();
+                        ta.select();
+                        alert(
+                          'No se pudo copiar automaticamente al portapapeles. El borrador esta seleccionado en un campo oculto: presiona Ctrl+C (o Cmd+C en Mac) para copiarlo.'
+                        );
+                      } else {
+                        alert(
+                          'No se pudo copiar al portapapeles y el fallback no esta disponible. Copia manualmente desde el panel.'
+                        );
+                      }
                     }
                   };
 
@@ -3384,6 +3423,23 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                           </p>
                         </div>
                       )}
+
+                      {/* Textarea oculto para fallback de copia (Chunk 9B - B2) */}
+                      <textarea
+                        id="borrador-fallback-textarea"
+                        readOnly
+                        value={textoPlano}
+                        aria-hidden="true"
+                        tabIndex={-1}
+                        style={{
+                          position: 'absolute',
+                          left: '-9999px',
+                          top: 'auto',
+                          width: '1px',
+                          height: '1px',
+                          overflow: 'hidden',
+                        }}
+                      />
 
                       {/* Acciones */}
                       <div className="border-t border-davy-gray/30 pt-4 flex flex-wrap gap-3">
