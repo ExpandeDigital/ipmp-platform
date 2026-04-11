@@ -15,7 +15,6 @@ export default function Nav({ current }: NavProps) {
   const links = [
     { href: '/', label: 'Dashboard', id: 'dashboard' },
     { href: '/projects', label: 'Projects', id: 'projects' },
-    { href: '/tools/angulos', label: 'Generador de Ángulos', id: 'angulos' },
   ];
 
   return (

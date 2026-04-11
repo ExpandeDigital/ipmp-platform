@@ -2358,10 +2358,18 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
               </span>
             </div>
           </div>
-          {project.thesis && (
+          {project.thesis ? (
             <div className="mt-4 pt-4 border-t border-davy-gray/20">
               <span className="text-davy-gray text-sm">Tesis:</span>
               <p className="text-seasalt mt-1">{project.thesis}</p>
+            </div>
+          ) : (
+            <div className="mt-4 pt-4 border-t border-davy-gray/20">
+              <span className="text-davy-gray text-sm">Tesis:</span>
+              <p className="text-davy-gray/70 text-sm italic mt-1">
+                Aun no hay tesis definida. Puedes generar hipotesis en la fase Validacion
+                y la tesis va a emerger de la hipotesis que elijas.
+              </p>
             </div>
           )}
         </section>

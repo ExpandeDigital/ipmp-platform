@@ -98,7 +98,7 @@ export default function NewProjectClient() {
       <div>
         <label className="block text-xs font-mono text-davy-gray uppercase tracking-wider mb-2">
           Tesis / Hipótesis
-          <span className="text-davy-gray/50 ml-2">(recomendado)</span>
+          <span className="text-davy-gray/50 ml-2">(opcional)</span>
         </label>
         <textarea
           value={thesis}
@@ -109,7 +109,7 @@ export default function NewProjectClient() {
           className="w-full bg-oxford-blue border border-davy-gray/50 rounded px-3 py-2.5 text-seasalt text-sm placeholder:text-davy-gray/50 focus:outline-none focus:border-amber-brand transition-colors resize-y"
         />
         <p className="text-davy-gray/50 text-xs mt-1">
-          La tesis guía la generación de ángulos. Cuanto más específica, mejores resultados.
+          Si ya tienes una tesis clara, escribela. Si arrancas desde un documento o un dato, dejalo vacio: la tesis puede emerger al generar hipotesis en la fase Validacion.
         </p>
       </div>
 
