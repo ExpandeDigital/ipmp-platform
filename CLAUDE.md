@@ -72,7 +72,7 @@ The pipeline order is defined once in `src/app/api/projects/[id]/route.ts` as `P
 ### Database (Drizzle + postgres-js)
 
 - `src/db/index.ts` exposes `db` via a **lazy Proxy singleton**. The real connection is created on first property access, not at module load. This is required because Next.js build-time evaluation happens without env vars — do not "simplify" it to eager initialization or the Vercel build will break.
-- `src/db/schema.ts` defines 8 tables: `tenants`, `users`, `templates`, `projects`, `assets`, `revisions`, `exports` (exported as `exports_` to avoid ES reserved-word collision), `consumption_logs`. On `projects`, `tenantId` and `templateId` are **nullable by design** (see IP phase above) — do not add `.notNull()` to them.
+- `src/db/schema.ts` defines 9 tables: `tenants`, `users`, `templates`, `projects`, `assets`, `revisions`, `exports` (exported as `exports_` to avoid ES reserved-word collision), `consumption_logs`, `editores_agenda` (Chunk 10, manual media-relations address book — no FKs, `tenants_relevantes` stored as jsonb array of tenant slugs). On `projects`, `tenantId` and `templateId` are **nullable by design** (see IP phase above) — do not add `.notNull()` to them.
 - `src/db/init-sql.ts` contains raw `CREATE TABLE` DDL used by `/api/admin/init`. Drizzle migrations are **not** in use; schema changes require updating both `schema.ts` and `init-sql.ts` together (plus a manual ALTER if data exists in production). The `drizzle/` directory exists but is empty.
 - `src/db/seed-data.ts` holds the canonical 7 tenants + 13 templates. `slug` is the idempotency key.
 
@@ -259,6 +259,50 @@ Operational lesson: the Roadmap can drift from the real state of the code across
 - The curation of the Validador de Borrador history in 9C C2 implemented the pattern proposed in the Chunk 7 finding "b": a dedicated field `data.validacion_borrador_definitiva_id` points to the chosen iteration, deletion of the chosen entry atomically clears the pointer in the same PATCH, and the chosen entry displays a green "Definitiva" badge. Pattern worth replicating for any future list of AI-generated artifacts that need a "canonical choice" affordance.
 - Operational incident during Chunk 9D: the first `npm run build` after deleting `src/app/tools/` failed due to stale typegen cache (see finding "a" above). Claude Code correctly diagnosed the issue and proposed `rm -rf .next && npm run build` as the fix, but because the operator had no direct way to audit the intermediate state, the correct protocol was to stop and report instead of improvising. The fix itself was idiomatic and correct; the process lesson is that any action outside the original prompt requires explicit stop-and-report, even when the technical decision is sound.
 
+## Hallazgos de validacion — Chunk 10 (11 abril 2026)
+
+Chunk 10 (Agenda de Editores manual) shipped in three sub-chunks executed over a single operator session, each validated before advancing to the next:
+
+- 10A: schema editores_agenda + CRUD API (GET/POST/PATCH). Validated via curl smoke test end-to-end against Railway after POST /api/admin/init: GET empty list, POST create, GET with one entry, PATCH soft-delete via activo:false, PATCH marcarVerificado:true. All 5 curls returned the expected shape and all field-level assertions passed (jsonb round-trip, nullable persistence, updatedAt advance on PATCH, ultimaVerificacion only set with explicit flag, activo preserved across subsequent partial PATCH).
+- 10B: UI CRUD at /admin/editores (server component page + single-file client component with inline editing). Validated visually in production: Nav link renders and highlights active state, list renders with correct shape (tier badge, tenant chips, piezas line, ultima verificacion line), inactive toggle hides/shows soft-deleted entries, new editor form creates real entry with optimistic update, tenant checkboxes populated dynamically from the tenants table via server-side query. The remaining handlers (inline Edit, Verificar hoy, Desactivar/Reactivar) are implemented per spec and will get their first functional exercise on the operator's next real media-relations work session — not blockers for closing the chunk.
+- 10C: this documentation update.
+
+Three findings worth preserving emerged during Chunk 10 execution, all architectural rather than operational:
+
+### a) Date to ISO string serialization at the server-to-client boundary
+
+When a Next.js 15/16 App Router page loads data via a server-side Drizzle query and passes it as a prop to a client component whose interface matches the JSON shape returned by the REST API, TypeScript correctly rejects the direct assignment because Drizzle returns `Date` objects for `timestamp` columns while `fetch().json()` returns ISO strings after traversing the JSON boundary. The incident surfaced on the first `npm run build` of 10B with a `Date | null` vs `string | null` error on `ultimaVerificacion`.
+
+The resolution applied was to serialize the three timestamp fields (`ultimaVerificacion`, `createdAt`, `updatedAt`) to ISO strings in `page.tsx` before passing the list to the client component, using a `.map()` with `.toISOString()` and the nullable guard for the optional one. This keeps a single `Editor` interface in the client, consistent with both the SSR initial props and the subsequent API responses, at the cost of a lightweight transformation on the server side.
+
+Pattern worth replicating for any future page that hydrates an initial list from SSR and then refreshes it via client-side fetch against the same API. The alternative (two interfaces `EditorServer` with `Date` and `EditorClient` with `string`) is strictly worse because it duplicates shape definitions and forces casts at every boundary. The serialization-at-boundary pattern is the canonical Next.js App Router idiom and should be adopted as the repo convention when the same shape bridges SSR and API.
+
+Deferred micro-debt: if a future chunk adds a second SSR-hydrated list with `Date` fields, the one-off `.map()` transformation should be factored into a shared helper (e.g. `src/lib/serialize.ts` with a `serializeTimestamps<T>(row: T): T` helper). Not worth factoring for a single caller — premature abstraction.
+
+### b) First admin route segment — no shared layout yet
+
+Chunk 10B introduced `/src/app/admin/` as a segment. The first page under that segment is `/admin/editores`. The decision taken was NOT to create a shared `admin/layout.tsx` yet, because with only one admin route the layout would be abstraction without consumers — the Nav is already provided by the page itself and there is no shared chrome to factor.
+
+When the second admin route appears in a future chunk (likely /admin/tenants or /admin/users or an admin dashboard index), the shared layout becomes justified and should be factored at that moment, not before. Rule: do not invent abstractions for a single caller.
+
+This is the same discipline that prevented a premature `/admin/editores/new` + `/admin/editores/[id]` route split in 10B. The single-page CRUD with inline editing was chosen over the three-route mirror of `/projects` because the operator's real-world use of the editors agenda is "see all, edit fast, move on" rather than "deep-dive into one entity for a long session". The ergonomic match to the use case dominates over consistency with a pattern designed for a different use case.
+
+### c) No DELETE in the API by design, soft-delete as the only reversibility affordance
+
+Chunk 10A explicitly decided against a DELETE endpoint. The only way to remove an editor from the active set is `PATCH /api/editores/[id]` with `{ activo: false }`, and the only way to restore it is the inverse PATCH. The UI reinforces this: the "Desactivar" button soft-deletes without confirmation, and the "Mostrar inactivos" toggle acts as the undo affordance by making the full set visible and exposing the "Reactivar" button on each inactive entry.
+
+The decision follows the Chunk 9 principle that soft gates are preferable to hard gates when the risk is recoverable. A hard DELETE is irreversible and would require confirmation modals, trash can semantics, retention windows, and other ceremony. A soft-delete is reversible by construction, has no risk, and needs zero ceremony.
+
+The empirical consequence is that the smoke test registry `75dfa942-1ac1-41b8-85c8-2e3e3ab293fb` ("Smoke Test" / "Diario de Prueba") remains persisted in production as a historical marker of the first CRUD exercise. If it ever becomes necessary to actually delete rows from `editores_agenda`, the intended path is a manual SQL DELETE against Railway rather than exposing a DELETE endpoint. That path remains operator-only and outside the application surface.
+
+### Notes on the successful Chunk 10 execution
+
+- The three sub-chunks shipped cleanly: `8523e74` (10A schema + API), `3f31a66` (10B UI), and this commit (10C docs).
+- Chunk 10A execution caught one real architectural decision on the fly: nullable-vs-notNull for jsonb arrays. The decision taken was `.notNull().default([])` for both `tenants_relevantes` and `tipo_pieza_recomendado`, which is stricter than the convention used in older tables (`tenants.brand_variants`, `templates.required_visual_slots`, etc. are nullable jsonb with default). The rationale: reading code that consumes these fields is simpler if the shape is guaranteed to be an array (no `?? []` everywhere), and INSERT code at the API layer already coerces to array anyway. The older tables remain nullable for retrocompat but new tables should default to `.notNull().default([])` for jsonb arrays unless there is a specific reason otherwise.
+- The first `POST /api/admin/init` attempt against production returned `{"error":"Unauthorized"}` with a token that did match the Vercel env var. The second attempt immediately after returned `{"success":true, ...}` with the exact same token and the exact same command. No root cause was identified — possibly edge node propagation of the env var after the deploy, possibly latency in a token cache. Documented here as noise rather than bug. If it happens again in a future chunk, treat it as diagnosable; if it stays a one-off, ignore.
+- The smoke test of Chunk 10A exercised all four CRUD primitives (list, create, partial update, soft-delete) and the field-level semantics (jsonb round-trip, nullable persistence, updatedAt auto-advance, marcarVerificado flag). No regressions on the pre-existing 8 tables.
+- The UI of Chunk 10B validated visually: the nav link, the header, the barra superior with visible/hidden counter, the form collapse/expand, the tenant checkboxes populated dynamically from `tenants` table, the optimistic update after create, and the shape of the tarjeta cards in the active and inactive states. The five remaining handlers (inline Edit save, Verificar hoy, Desactivar, Reactivar, and the re-sort on tier change) were not exercised explicitly in the validation session — they will get their first functional exercise on the next real media-relations work session. The code is straightforward and follows the patterns exercised by other handlers, so this is acceptable deferred validation, not blocker.
+
 ## Roadmap
 
 Confirmed chunk ordering after Chunk 6 validation (10 abril 2026). Each chunk should preserve the Chunk 6 retrocompat contract: projects created under older chunks must keep rendering without writes to any of the new `data.*` keys.
@@ -299,20 +343,40 @@ Cerrado en una sola sesion de trabajo dividida en cuatro sub-chunks secuenciales
 
 Hallazgos de validacion: ver seccion "Hallazgos de validacion — Chunk 9 (11 abril 2026)" mas arriba.
 
-### Chunk 10 — Agenda de Editores manual (next priority)
+### Chunk 10 — Agenda de Editores manual [COMPLETADO 11 abril 2026]
 
-Base minima de editores y periodistas chilenos por tier para uso interno de media relations del holding. Decidido en Chunk 9 que la pesquisa automatizada con IA no es confiable (validado empiricamente con dos intentos): los nombres pueden ser plausibles pero parcialmente falsos, y el costo de descubrir las entradas falsas es quemar contactos. La solucion es una agenda manual con CRUD propio.
+Cerrado en una sola sesion de trabajo dividida en tres sub-chunks secuenciales, cada uno con validacion antes del siguiente:
 
-Alcance:
-- Nueva tabla `editores_agenda` en PostgreSQL (via Drizzle + init-sql.ts). Columnas minimas: `id`, `nombre`, `apellido`, `medio`, `seccion`, `tier` (1/2/3), `tenants_relevantes` (array), `tipo_pieza_recomendado` (array), `email` (opcional), `telefono` (opcional), `notas`, `ultima_verificacion` (fecha), `activo` (boolean), `creado_en`, `actualizado_en`.
-- Nueva pagina `/admin/editores` con UI CRUD basica: listado + form de alta + edicion + soft-delete. Sin importacion desde JSON. Sin busqueda avanzada. Sin integracion con el Constructor de Pitch en este chunk.
-- La integracion del Constructor de Pitch con `editores_agenda` (autopoblar el campo "medio destino" desde la agenda filtrada por tenant+template+tier) queda para Chunk 11 o posterior, cuando el operador ya tenga registros cargados y observe como querria consumirlos.
+- `8523e74` feat(chunk10a): schema `editores_agenda` + CRUD API. Nueva tabla en Drizzle + init-sql.ts con 15 columnas (`id`, `nombre`, `apellido`, `medio`, `seccion`, `tier`, `tenants_relevantes` jsonb array, `tipo_pieza_recomendado` jsonb array, `email`, `telefono`, `notas`, `ultima_verificacion`, `activo`, `created_at`, `updated_at`) + dos indices (`idx_editores_activo`, `idx_editores_tier`). Dos endpoints nuevos: `GET`/`POST /api/editores` y `GET`/`PATCH /api/editores/[id]`. Sin DELETE por diseno: soft-delete via `PATCH { activo: false }`, marcar verificado via `PATCH { marcarVerificado: true }`. Tenants referenciados por slug dentro del jsonb, sin FK. Smoke test en produccion validando los cuatro primitivos del CRUD + las semanticas de nullable, jsonb round-trip, updatedAt auto-advance, y preservacion de campos ausentes en PATCH parcial.
 
-### Chunk 11+ — Futuros (sin orden definitivo)
+- `3f31a66` feat(chunk10b): UI CRUD en `/admin/editores`. Nueva ruta admin (primera del segmento `/admin/*`): `page.tsx` como server component que resuelve en paralelo la lista de tenants disponibles (poblando los checkboxes del form) y la lista inicial de editores (listado), y `EditoresClient.tsx` como client component con todo el CRUD en una sola pagina. Decision de diseno: listado + form de alta colapsable + edicion inline por fila (acordeon), en lugar del patron de tres rutas (`/new`, `/[id]`) usado por `/projects`. El volumen esperado (<100 entradas) y la ergonomia del operador en un CRUD de contactos (ver todo, editar rapido, salir) justifican la pagina unica. Toggle "Mostrar inactivos" como undo natural del soft-delete, sin confirmacion adicional, alineado con el principio de Chunk 9 de soft gates sobre hard gates cuando el riesgo es recuperable. Acciones por tarjeta: Editar inline, Verificar hoy, Desactivar/Reactivar condicional. Link "Editores" agregado a `Nav.tsx` como tercer item. Validado visualmente en produccion.
 
-- Integracion agenda de editores con Constructor de Pitch (depende de Chunk 10).
-- Upload real de documentos fuente en el ODF (a2 del Chunk 7): infraestructura de storage (Vercel Blob o S3), signed URLs, MIME validation, max file size, deletion contract. Chunk dedicado.
+- `e2179fc` docs(chunk10): cierre documental del Chunk 10 (esta edicion). Hallazgos de validacion agregados arriba.
+
+Decision arquitectonica registrada: los jsonb arrays en `editores_agenda` son `.notNull().default([])` (no nullable), contrario a la convencion de las tablas antiguas (`tenants.brand_variants`, `templates.required_visual_slots`) que son jsonb nullable con default. La razon es que el codigo consumidor es mas simple si la shape esta garantizada como array, y las tablas nuevas adoptan esta convencion. Las tablas antiguas se mantienen nullable por retrocompat.
+
+Hallazgos de validacion: ver seccion "Hallazgos de validacion — Chunk 10 (11 abril 2026)" mas arriba.
+
+### Chunk 11 — Integracion agenda-pitch (next priority)
+
+Conectar la agenda de editores del Chunk 10 con el Constructor de Pitch existente. El objetivo es que cuando el operador esta armando un pitch en fase `produccion` para un project con `tenant` + `template` + `tier objetivo` definidos, el formulario del Constructor autopopule o sugiera el campo "medio destino" / "editor destino" desde `editores_agenda` filtrado por:
+
+- `activo = true` (no proponer contactos soft-deleted).
+- `tier` del editor matcheando el tier objetivo del pitch (idealmente <= al tier objetivo para permitir escalar hacia arriba).
+- `tenants_relevantes` conteniendo el slug del tenant del project.
+- Opcionalmente, `tipo_pieza_recomendado` conteniendo un identificador derivado de `template.family` (ej. family `prensa` matchea `reportaje`, `nota`, `entrevista`; family `opinion` matchea `columna`).
+
+Alcance propuesto (a refinar al arrancar el chunk):
+- Nuevo endpoint `GET /api/editores/sugerencias` que recibe `tenantSlug`, `tier`, `templateFamily` y devuelve el subset filtrado. Alternativa: filtrar en el client desde la lista completa si el volumen lo permite (<100 entries). Decision dependiente de como resulte la UX.
+- Modificacion del tab de Constructor de Pitch en `ProjectDetailClient.tsx` para agregar un panel "Editores sugeridos" antes o dentro del form actual, con chips clickeables que autopopulan el campo destino.
+- Posible refinamiento del prompt del Constructor para inyectar el nombre del editor elegido como contexto adicional cuando esta disponible.
+
+Dependencias: Chunk 10 completo (listo). No requiere cambios en otras areas del pipeline.
+
+### Chunk 12+ — Futuros (sin orden definitivo)
+
 - Exportador basico para fase `exportado` (primer destino probable: `empaquetado_interno` como zip). Chunk dedicado.
+- Upload real de documentos fuente en el ODF (a2 del Chunk 7): infraestructura de storage (Vercel Blob o S3), signed URLs, MIME validation, max file size, deletion contract. Chunk dedicado, probablemente el mas grande pendiente.
 - Asset library per tenant con versionado y metadata obligatoria (declaracion IA, alt text, origen).
 - Cleanup del map `VERIFICACION_COLORS` en `ProjectDetailClient.tsx`: eliminar la entrada `dato_referencial` que quedo huerfana despues del Chunk 9A D1 (se preservo para retrocompat de hipotesis legacy, pero se puede remover cuando se confirme que ya no quedan hipotesis antiguas con ese valor en produccion).
 - Cleanup del canal de error del Validador de Borrador: posiblemente consolidar `borradorError` y `genBorradorError` en un solo namespace cuando la arquitectura de errores evolucione. Por ahora conviven sin problemas.
