@@ -111,6 +111,18 @@ interface ValidacionBorradorEntry {
   validado_en: string;
 }
 
+// Organizador de Fuentes Forenses — Chunk 7
+interface Fuente {
+  id: string;
+  tipo: 'persona' | 'documento' | 'dato' | 'testimonio';
+  nombre_titulo: string;
+  rol_origen: string;
+  estado: 'por_contactar' | 'contactada' | 'verificada' | 'descartada';
+  confianza: 'baja' | 'media' | 'alta';
+  notas: string;
+  fecha_registro: string;
+}
+
 // Legacy (retrocompat — Chunks 4-5)
 interface ValidacionLegacy {
   evaluacion: ValidacionDimension[];
@@ -151,7 +163,7 @@ interface TemplateOption {
   reviewLevel: string;
 }
 
-type ActiveTool = 'hipotesis' | 'pitch' | 'radar' | 'validador';
+type ActiveTool = 'hipotesis' | 'odf' | 'pitch' | 'radar' | 'validador';
 
 interface PhaseConfig {
   tabs: { key: ActiveTool; label: string }[];
@@ -211,6 +223,33 @@ const RIESGO_FAB_LABELS: Record<string, string> = {
   alto: '🔴 Riesgo fabricación: ALTO',
 };
 
+const FUENTE_TIPO_LABELS: Record<string, string> = {
+  persona: '👤 Persona',
+  documento: '📄 Documento',
+  dato: '📊 Dato',
+  testimonio: '🗣️ Testimonio',
+};
+
+const FUENTE_ESTADO_LABELS: Record<string, string> = {
+  por_contactar: 'Por contactar',
+  contactada: 'Contactada',
+  verificada: 'Verificada',
+  descartada: 'Descartada',
+};
+
+const FUENTE_ESTADO_COLORS: Record<string, string> = {
+  por_contactar: 'bg-davy-gray/20 text-davy-gray border-davy-gray/40',
+  contactada: 'bg-blue-500/20 text-blue-400 border-blue-500/40',
+  verificada: 'bg-green-500/20 text-green-400 border-green-500/40',
+  descartada: 'bg-red-500/20 text-red-400 border-red-500/40',
+};
+
+const FUENTE_CONFIANZA_COLORS: Record<string, string> = {
+  baja: 'bg-red-500/20 text-red-400 border-red-500/40',
+  media: 'bg-amber-brand/20 text-amber-brand border-amber-brand/40',
+  alta: 'bg-green-500/20 text-green-400 border-green-500/40',
+};
+
 const VEREDICTO_LABELS: Record<string, { label: string; color: string }> = {
   publicable: { label: '✅ Publicable', color: 'text-green-400' },
   publicable_con_cambios: { label: '⚠️ Publicable con cambios', color: 'text-amber-brand' },
@@ -235,6 +274,7 @@ const PHASE_CONFIG: Record<string, PhaseConfig> = {
   },
   pesquisa: {
     tabs: [
+      { key: 'odf', label: '🗂️ Organizador de Fuentes' },
       { key: 'pitch', label: '📨 Constructor de Pitch' },
       { key: 'radar', label: '📡 Radar Editorial' },
     ],
@@ -299,6 +339,43 @@ function parseHipotesisFromRaw(a: Record<string, unknown>, idx: number): Hipotes
       typeof a.evidencia_requerida === 'string' ? a.evidencia_requerida : undefined,
     riesgo_fabricacion:
       typeof a.riesgo_fabricacion === 'string' ? a.riesgo_fabricacion : undefined,
+  };
+}
+
+function parseFuenteFromRaw(f: Record<string, unknown>): Fuente {
+  const tipoRaw = String(f.tipo ?? '');
+  const tipo: Fuente['tipo'] =
+    tipoRaw === 'persona' || tipoRaw === 'documento' || tipoRaw === 'dato' || tipoRaw === 'testimonio'
+      ? tipoRaw
+      : 'documento';
+
+  const estadoRaw = String(f.estado ?? '');
+  const estado: Fuente['estado'] =
+    estadoRaw === 'por_contactar' ||
+    estadoRaw === 'contactada' ||
+    estadoRaw === 'verificada' ||
+    estadoRaw === 'descartada'
+      ? estadoRaw
+      : 'por_contactar';
+
+  const confianzaRaw = String(f.confianza ?? '');
+  const confianza: Fuente['confianza'] =
+    confianzaRaw === 'baja' || confianzaRaw === 'media' || confianzaRaw === 'alta'
+      ? confianzaRaw
+      : 'media';
+
+  return {
+    id: typeof f.id === 'string' && f.id ? f.id : genId(),
+    tipo,
+    nombre_titulo: String(f.nombre_titulo ?? ''),
+    rol_origen: String(f.rol_origen ?? ''),
+    estado,
+    confianza,
+    notas: String(f.notas ?? ''),
+    fecha_registro:
+      typeof f.fecha_registro === 'string' && f.fecha_registro
+        ? f.fecha_registro
+        : new Date().toISOString(),
   };
 }
 
@@ -368,6 +445,17 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
   const [validandoBorrador, setValidandoBorrador] = useState(false);
   const [borradorError, setBorradorError] = useState<string | null>(null);
   const [expandedBorrador, setExpandedBorrador] = useState<string | null>(null);
+
+  // Organizador de Fuentes Forenses (ODF) — Chunk 7
+  const [odfTipo, setOdfTipo] = useState<Fuente['tipo']>('documento');
+  const [odfNombreTitulo, setOdfNombreTitulo] = useState('');
+  const [odfRolOrigen, setOdfRolOrigen] = useState('');
+  const [odfEstado, setOdfEstado] = useState<Fuente['estado']>('por_contactar');
+  const [odfConfianza, setOdfConfianza] = useState<Fuente['confianza']>('media');
+  const [odfNotas, setOdfNotas] = useState('');
+  const [odfGuardando, setOdfGuardando] = useState(false);
+  const [odfError, setOdfError] = useState<string | null>(null);
+  const [odfEditandoId, setOdfEditandoId] = useState<string | null>(null);
 
   // Active tool (default se reajusta por useEffect según fase)
   const [activeTool, setActiveTool] = useState<ActiveTool>('hipotesis');
@@ -782,6 +870,127 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
     }
   }
 
+  // ── Organizador de Fuentes Forenses (ODF) — Chunk 7 ──
+  function resetOdfForm() {
+    setOdfTipo('documento');
+    setOdfNombreTitulo('');
+    setOdfRolOrigen('');
+    setOdfEstado('por_contactar');
+    setOdfConfianza('media');
+    setOdfNotas('');
+    setOdfEditandoId(null);
+    setOdfError(null);
+  }
+
+  async function persistirFuentes(nuevasFuentes: Fuente[]) {
+    if (!project) return;
+    const res = await fetch(`/api/projects/${project.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data: { fuentes: nuevasFuentes } }),
+    });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      throw new Error(j.error || 'Error persistiendo fuentes');
+    }
+    await fetchProject();
+  }
+
+  async function handleGuardarFuente() {
+    if (!project) return;
+    if (!odfNombreTitulo.trim()) {
+      setOdfError('El nombre/título es obligatorio');
+      return;
+    }
+    setOdfGuardando(true);
+    setOdfError(null);
+
+    try {
+      const fuentesActuales: Fuente[] = Array.isArray(project.data?.fuentes)
+        ? (project.data.fuentes as unknown[]).map((f) =>
+            parseFuenteFromRaw(f as Record<string, unknown>)
+          )
+        : [];
+
+      let nuevasFuentes: Fuente[];
+
+      if (odfEditandoId) {
+        nuevasFuentes = fuentesActuales.map((f) =>
+          f.id === odfEditandoId
+            ? {
+                ...f,
+                tipo: odfTipo,
+                nombre_titulo: odfNombreTitulo.trim(),
+                rol_origen: odfRolOrigen.trim(),
+                estado: odfEstado,
+                confianza: odfConfianza,
+                notas: odfNotas.trim(),
+              }
+            : f
+        );
+      } else {
+        const nueva: Fuente = {
+          id: genId(),
+          tipo: odfTipo,
+          nombre_titulo: odfNombreTitulo.trim(),
+          rol_origen: odfRolOrigen.trim(),
+          estado: odfEstado,
+          confianza: odfConfianza,
+          notas: odfNotas.trim(),
+          fecha_registro: new Date().toISOString(),
+        };
+        nuevasFuentes = [...fuentesActuales, nueva];
+      }
+
+      await persistirFuentes(nuevasFuentes);
+      resetOdfForm();
+    } catch (err) {
+      setOdfError(err instanceof Error ? err.message : 'Error al guardar fuente');
+    } finally {
+      setOdfGuardando(false);
+    }
+  }
+
+  function handleEditarFuente(f: Fuente) {
+    setOdfEditandoId(f.id);
+    setOdfTipo(f.tipo);
+    setOdfNombreTitulo(f.nombre_titulo);
+    setOdfRolOrigen(f.rol_origen);
+    setOdfEstado(f.estado);
+    setOdfConfianza(f.confianza);
+    setOdfNotas(f.notas);
+    setOdfError(null);
+  }
+
+  async function handleEliminarFuente(id: string) {
+    if (!project) return;
+    const fuentesActuales: Fuente[] = Array.isArray(project.data?.fuentes)
+      ? (project.data.fuentes as unknown[]).map((f) =>
+          parseFuenteFromRaw(f as Record<string, unknown>)
+        )
+      : [];
+    const f = fuentesActuales.find((x) => x.id === id);
+    if (!f) return;
+    if (
+      !confirm(
+        `¿Eliminar la fuente "${f.nombre_titulo}"? Esta acción no se puede deshacer.`
+      )
+    )
+      return;
+
+    setOdfGuardando(true);
+    setOdfError(null);
+    try {
+      const nuevasFuentes = fuentesActuales.filter((x) => x.id !== id);
+      await persistirFuentes(nuevasFuentes);
+      if (odfEditandoId === id) resetOdfForm();
+    } catch (err) {
+      setOdfError(err instanceof Error ? err.message : 'Error al eliminar fuente');
+    } finally {
+      setOdfGuardando(false);
+    }
+  }
+
   // ── Loading / Error states ──
   if (loading) {
     return (
@@ -875,6 +1084,13 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
   } catch {
     savedHipotesisElegida = null;
   }
+
+  // ── Fuentes del ODF (Chunk 7, retrocompat: proyectos viejos no tienen data.fuentes) ──
+  const currentFuentes: Fuente[] = Array.isArray(project.data?.fuentes)
+    ? (project.data.fuentes as unknown[]).map((f) =>
+        parseFuenteFromRaw(f as Record<string, unknown>)
+      )
+    : [];
 
   // ── Radar editorial historial ──
   let savedRadar: RadarEntry[] = [];
@@ -1262,6 +1478,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
               const isFuture = idx > project.pipelineIndex;
               const isIPBar = IP_PHASES.includes(phase);
               const showElegidaBadge = phase === 'validacion' && !!savedHipotesisElegida;
+              const showFuentesBadge = phase === 'pesquisa' && currentFuentes.length > 0;
 
               return (
                 <div
@@ -1287,6 +1504,11 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
                   {showElegidaBadge && (
                     <div className="mt-1 text-[10px] leading-none font-semibold">
                       ⭐ elegida
+                    </div>
+                  )}
+                  {showFuentesBadge && (
+                    <div className="mt-1 text-[10px] leading-none font-semibold">
+                      🗂️ {currentFuentes.length} fuente{currentFuentes.length !== 1 ? 's' : ''}
                     </div>
                   )}
                 </div>
@@ -1612,6 +1834,249 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
                   {hipError && <p className="text-red-400 text-sm mt-3">{hipError}</p>}
                 </div>
               )}
+
+            {/* ── TAB: Organizador de Fuentes Forenses (fase pesquisa) — Chunk 7 ── */}
+            {activeTool === 'odf' && phaseConfig.tabs.some((t) => t.key === 'odf') && (
+              <section className="space-y-6">
+                {/* Header */}
+                <div>
+                  <h2 className="text-seasalt font-bold text-lg mb-1">
+                    🗂️ Organizador de Fuentes Forenses
+                  </h2>
+                  <p className="text-davy-gray text-sm">
+                    Registrá personas, documentos, datos y testimonios que van alimentando la
+                    pesquisa. Cada fuente tiene estado y nivel de confianza para que podás ver el
+                    progreso real de la investigación.
+                  </p>
+                </div>
+
+                {/* Formulario */}
+                <div className="bg-space-cadet rounded-lg border border-davy-gray/30 p-5 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-amber-brand font-semibold text-sm">
+                      {odfEditandoId ? 'Editar fuente' : 'Agregar nueva fuente'}
+                    </h3>
+                    {odfEditandoId && (
+                      <button
+                        onClick={resetOdfForm}
+                        className="text-xs text-davy-gray hover:text-seasalt"
+                      >
+                        Cancelar edición
+                      </button>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-mono text-davy-gray uppercase tracking-wider mb-2">
+                      Tipo de fuente
+                    </label>
+                    <select
+                      value={odfTipo}
+                      onChange={(e) => setOdfTipo(e.target.value as Fuente['tipo'])}
+                      className="w-full bg-oxford-blue border border-davy-gray/50 rounded px-3 py-2.5 text-seasalt text-sm focus:outline-none focus:border-amber-brand"
+                    >
+                      {Object.entries(FUENTE_TIPO_LABELS).map(([k, v]) => (
+                        <option key={k} value={k}>
+                          {v}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-mono text-davy-gray uppercase tracking-wider mb-2">
+                      Nombre o título <span className="text-red-400">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={odfNombreTitulo}
+                      onChange={(e) => setOdfNombreTitulo(e.target.value)}
+                      placeholder={
+                        odfTipo === 'persona'
+                          ? 'Ej: María Pérez'
+                          : odfTipo === 'documento'
+                          ? 'Ej: Decreto 1234/2025'
+                          : odfTipo === 'dato'
+                          ? 'Ej: Estadística de natalidad INE 2024'
+                          : 'Ej: Testimonio de ex-funcionario'
+                      }
+                      className="w-full bg-oxford-blue border border-davy-gray/50 rounded px-3 py-2.5 text-seasalt text-sm placeholder:text-davy-gray/50 focus:outline-none focus:border-amber-brand"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-mono text-davy-gray uppercase tracking-wider mb-2">
+                      Rol / origen / procedencia
+                    </label>
+                    <input
+                      type="text"
+                      value={odfRolOrigen}
+                      onChange={(e) => setOdfRolOrigen(e.target.value)}
+                      placeholder={
+                        odfTipo === 'persona'
+                          ? 'Ej: Directora de Epidemiología, Minsal Chile'
+                          : odfTipo === 'documento'
+                          ? 'Ej: Publicado en Diario Oficial, 12-mar-2025'
+                          : odfTipo === 'dato'
+                          ? 'Ej: INE, serie histórica 2010-2024'
+                          : 'Ej: Reunión off-the-record, abril 2026'
+                      }
+                      className="w-full bg-oxford-blue border border-davy-gray/50 rounded px-3 py-2.5 text-seasalt text-sm placeholder:text-davy-gray/50 focus:outline-none focus:border-amber-brand"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-mono text-davy-gray uppercase tracking-wider mb-2">
+                        Estado
+                      </label>
+                      <select
+                        value={odfEstado}
+                        onChange={(e) => setOdfEstado(e.target.value as Fuente['estado'])}
+                        className="w-full bg-oxford-blue border border-davy-gray/50 rounded px-3 py-2.5 text-seasalt text-sm focus:outline-none focus:border-amber-brand"
+                      >
+                        {Object.entries(FUENTE_ESTADO_LABELS).map(([k, v]) => (
+                          <option key={k} value={k}>
+                            {v}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-mono text-davy-gray uppercase tracking-wider mb-2">
+                        Confianza
+                      </label>
+                      <select
+                        value={odfConfianza}
+                        onChange={(e) =>
+                          setOdfConfianza(e.target.value as Fuente['confianza'])
+                        }
+                        className="w-full bg-oxford-blue border border-davy-gray/50 rounded px-3 py-2.5 text-seasalt text-sm focus:outline-none focus:border-amber-brand"
+                      >
+                        <option value="baja">Baja</option>
+                        <option value="media">Media</option>
+                        <option value="alta">Alta</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-mono text-davy-gray uppercase tracking-wider mb-2">
+                      Notas <span className="text-davy-gray/50">(opcional)</span>
+                    </label>
+                    <textarea
+                      value={odfNotas}
+                      onChange={(e) => setOdfNotas(e.target.value)}
+                      rows={3}
+                      placeholder="Observaciones, contacto, próximos pasos..."
+                      className="w-full bg-oxford-blue border border-davy-gray/50 rounded px-3 py-2.5 text-seasalt text-sm placeholder:text-davy-gray/50 focus:outline-none focus:border-amber-brand resize-y"
+                    />
+                  </div>
+
+                  <button
+                    onClick={handleGuardarFuente}
+                    disabled={odfGuardando || !odfNombreTitulo.trim()}
+                    className={`w-full py-3 rounded font-bold text-sm transition-all ${
+                      odfGuardando || !odfNombreTitulo.trim()
+                        ? 'bg-davy-gray/30 text-davy-gray cursor-not-allowed'
+                        : 'bg-amber-brand text-oxford-blue hover:bg-amber-brand/90 active:scale-[0.99]'
+                    }`}
+                  >
+                    {odfGuardando
+                      ? 'Guardando...'
+                      : odfEditandoId
+                      ? 'Actualizar fuente'
+                      : 'Agregar fuente al expediente'}
+                  </button>
+
+                  {odfError && (
+                    <div className="bg-red-900/20 border border-red-700 rounded p-3">
+                      <p className="text-red-400 text-sm">{odfError}</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Listado */}
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-seasalt font-semibold text-sm">Expediente de fuentes</h3>
+                    <span className="text-davy-gray text-xs">
+                      {currentFuentes.length} fuente{currentFuentes.length !== 1 ? 's' : ''}
+                    </span>
+                  </div>
+
+                  {currentFuentes.length === 0 ? (
+                    <div className="bg-oxford-blue/50 border border-davy-gray/20 rounded-lg p-8 text-center">
+                      <p className="text-davy-gray text-sm">
+                        Todavía no hay fuentes en el expediente. Agregá la primera desde el
+                        formulario de arriba.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {currentFuentes.map((f) => (
+                        <div
+                          key={f.id}
+                          className="bg-space-cadet rounded-lg border border-davy-gray/30 p-4 hover:border-amber-brand/30 transition-colors"
+                        >
+                          <div className="flex items-start justify-between gap-3 mb-2">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                <span className="text-xs text-davy-gray">
+                                  {FUENTE_TIPO_LABELS[f.tipo] ?? f.tipo}
+                                </span>
+                                <span
+                                  className={`text-[10px] px-2 py-0.5 rounded border ${
+                                    FUENTE_ESTADO_COLORS[f.estado] ?? ''
+                                  }`}
+                                >
+                                  {FUENTE_ESTADO_LABELS[f.estado] ?? f.estado}
+                                </span>
+                                <span
+                                  className={`text-[10px] px-2 py-0.5 rounded border ${
+                                    FUENTE_CONFIANZA_COLORS[f.confianza] ?? ''
+                                  }`}
+                                >
+                                  Confianza: {f.confianza}
+                                </span>
+                              </div>
+                              <h4 className="text-seasalt font-semibold text-sm break-words">
+                                {f.nombre_titulo}
+                              </h4>
+                              {f.rol_origen && (
+                                <p className="text-davy-gray text-xs mt-0.5">{f.rol_origen}</p>
+                              )}
+                            </div>
+                            <div className="flex gap-1 shrink-0">
+                              <button
+                                onClick={() => handleEditarFuente(f)}
+                                className="text-xs text-davy-gray hover:text-amber-brand px-2 py-1"
+                                title="Editar"
+                              >
+                                ✏️
+                              </button>
+                              <button
+                                onClick={() => handleEliminarFuente(f.id)}
+                                className="text-xs text-davy-gray hover:text-red-400 px-2 py-1"
+                                title="Eliminar"
+                              >
+                                🗑️
+                              </button>
+                            </div>
+                          </div>
+                          {f.notas && (
+                            <p className="text-davy-gray/80 text-xs mt-2 italic">{f.notas}</p>
+                          )}
+                          <p className="text-davy-gray/50 text-[10px] mt-2">
+                            Registrada: {new Date(f.fecha_registro).toLocaleString('es-CL')}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </section>
+            )}
 
             {/* ── TAB: Constructor de Pitch (fase pesquisa) ── */}
             {activeTool === 'pitch' && phaseConfig.tabs.some((t) => t.key === 'pitch') && (
