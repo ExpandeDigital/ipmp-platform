@@ -190,6 +190,39 @@ interface PitchData {
   generadoEn: string;
 }
 
+// Generador de Borrador — Chunk 8
+interface BorradorSeccion {
+  subtitulo: string;
+  parrafos: string[];
+}
+
+interface BorradorBody {
+  titulo: string;
+  bajada: string;
+  lead: string;
+  cuerpo: BorradorSeccion[];
+  cierre: string;
+}
+
+interface BorradorMetadata {
+  extension_palabras: number;
+  tipo_pieza: string;
+  tono_aplicado: string;
+  fuentes_citadas: string[];
+  advertencias_verificacion: string[];
+  verificaciones_criticas_resueltas: string[];
+  verificaciones_criticas_pendientes: string[];
+}
+
+interface BorradorData {
+  borrador: BorradorBody;
+  metadata: BorradorMetadata;
+  notas_editoriales: string;
+  generadoEn: string;
+  notasOperador?: string;
+  modo?: string;
+}
+
 interface TenantOption {
   slug: string;
   name: string;
@@ -204,7 +237,7 @@ interface TemplateOption {
   reviewLevel: string;
 }
 
-type ActiveTool = 'hipotesis' | 'vhp' | 'odf' | 'pitch' | 'radar' | 'validador';
+type ActiveTool = 'hipotesis' | 'vhp' | 'odf' | 'pitch' | 'radar' | 'validador' | 'borrador';
 
 interface PhaseConfig {
   tabs: { key: ActiveTool; label: string }[];
@@ -351,8 +384,7 @@ const PHASE_CONFIG: Record<string, PhaseConfig> = {
     ],
   },
   produccion: {
-    tabs: [],
-    placeholder: 'Generador de Borrador — previsto para Chunk 8',
+    tabs: [{ key: 'borrador', label: '✍️ Generador de Borrador' }],
   },
   visual: {
     tabs: [],
@@ -455,6 +487,59 @@ function parseFuenteFromRaw(f: Record<string, unknown>): Fuente {
     origen_validacion_id:
       typeof f.origen_validacion_id === 'string' ? f.origen_validacion_id : undefined,
   };
+}
+
+function parseBorradorFromRaw(raw: Record<string, unknown>): BorradorData | null {
+  if (!raw || typeof raw !== 'object') return null;
+
+  const borradorRaw = raw.borrador as Record<string, unknown> | undefined;
+  if (!borradorRaw || typeof borradorRaw !== 'object') return null;
+
+  const cuerpoRaw = Array.isArray(borradorRaw.cuerpo) ? borradorRaw.cuerpo : [];
+  const cuerpo: BorradorSeccion[] = cuerpoRaw.map((s) => {
+    const sec = s as Record<string, unknown>;
+    return {
+      subtitulo: typeof sec.subtitulo === 'string' ? sec.subtitulo : '',
+      parrafos: Array.isArray(sec.parrafos) ? (sec.parrafos as unknown[]).map(String) : [],
+    };
+  });
+
+  const borrador: BorradorBody = {
+    titulo: typeof borradorRaw.titulo === 'string' ? borradorRaw.titulo : 'Sin titulo',
+    bajada: typeof borradorRaw.bajada === 'string' ? borradorRaw.bajada : '',
+    lead: typeof borradorRaw.lead === 'string' ? borradorRaw.lead : '',
+    cuerpo,
+    cierre: typeof borradorRaw.cierre === 'string' ? borradorRaw.cierre : '',
+  };
+
+  const metadataRaw = (raw.metadata ?? {}) as Record<string, unknown>;
+  const metadata: BorradorMetadata = {
+    extension_palabras:
+      typeof metadataRaw.extension_palabras === 'number' ? metadataRaw.extension_palabras : 0,
+    tipo_pieza: typeof metadataRaw.tipo_pieza === 'string' ? metadataRaw.tipo_pieza : '',
+    tono_aplicado: typeof metadataRaw.tono_aplicado === 'string' ? metadataRaw.tono_aplicado : '',
+    fuentes_citadas: Array.isArray(metadataRaw.fuentes_citadas)
+      ? (metadataRaw.fuentes_citadas as unknown[]).map(String)
+      : [],
+    advertencias_verificacion: Array.isArray(metadataRaw.advertencias_verificacion)
+      ? (metadataRaw.advertencias_verificacion as unknown[]).map(String)
+      : [],
+    verificaciones_criticas_resueltas: Array.isArray(metadataRaw.verificaciones_criticas_resueltas)
+      ? (metadataRaw.verificaciones_criticas_resueltas as unknown[]).map(String)
+      : [],
+    verificaciones_criticas_pendientes: Array.isArray(
+      metadataRaw.verificaciones_criticas_pendientes
+    )
+      ? (metadataRaw.verificaciones_criticas_pendientes as unknown[]).map(String)
+      : [],
+  };
+
+  const notas = typeof raw.notas_editoriales === 'string' ? raw.notas_editoriales : '';
+  const generadoEn = typeof raw.generadoEn === 'string' ? raw.generadoEn : new Date().toISOString();
+  const notasOperador = typeof raw.notasOperador === 'string' ? raw.notasOperador : undefined;
+  const modo = typeof raw.modo === 'string' ? raw.modo : undefined;
+
+  return { borrador, metadata, notas_editoriales: notas, generadoEn, notasOperador, modo };
 }
 
 function parseValidacionHipotesisFromRaw(
@@ -608,6 +693,11 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
 
   // Active tool (default se reajusta por useEffect según fase)
   const [activeTool, setActiveTool] = useState<ActiveTool>('hipotesis');
+
+  // Generador de Borrador — Chunk 8
+  const [borradorOperadorNotas, setBorradorOperadorNotas] = useState('');
+  const [generandoBorrador, setGenerandoBorrador] = useState(false);
+  const [genBorradorError, setGenBorradorError] = useState<string | null>(null);
 
   // ── Cargar project ──
   const fetchProject = useCallback(async () => {
@@ -902,6 +992,174 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
       setRadarError(err instanceof Error ? err.message : 'Error desconocido');
     } finally {
       setAuditandoRadar(false);
+    }
+  }
+
+  // ── Generar Borrador (Chunk 8) ──
+  async function handleGenerateBorrador() {
+    if (!project) return;
+
+    // Hard-block: hipótesis elegida obligatoria
+    const hipotesisElegida = project.data?.hipotesis_elegida as
+      | Record<string, unknown>
+      | undefined;
+    if (!hipotesisElegida || typeof hipotesisElegida !== 'object') {
+      setGenBorradorError(
+        'No hay hipotesis elegida. Volve a la fase Validacion, generá hipotesis y eligi una antes de generar el borrador.'
+      );
+      return;
+    }
+
+    // Hard-block: tenant + template (debería estar garantizado por el traspaso, pero validamos)
+    if (!project.tenantSlug || !project.templateSlug) {
+      setGenBorradorError(
+        'El Generador de Borrador requiere que el project ya haya pasado por el traspaso a MetricPress (tenant + template asignados).'
+      );
+      return;
+    }
+
+    // Soft gate: fuentes vacías es warning confirmable
+    const fuentes = (project.data?.fuentes as unknown[] | undefined) ?? [];
+    if (fuentes.length === 0) {
+      const confirmar = confirm(
+        'No hay fuentes registradas en el ODF. El borrador va a quedar muy escueto y con muchas advertencias [VERIFICAR]. ¿Generar igual?'
+      );
+      if (!confirmar) return;
+    }
+
+    setGenerandoBorrador(true);
+    setGenBorradorError(null);
+
+    try {
+      // Construir el userMessage desde el expediente
+      const heRaw = hipotesisElegida as Record<string, unknown>;
+      const verifCriticas = Array.isArray(heRaw.verificaciones_criticas)
+        ? (heRaw.verificaciones_criticas as unknown[]).map(String)
+        : [];
+
+      let userMessage = '';
+
+      if (project.thesis) {
+        userMessage += `TESIS ORIGINAL DEL PROJECT:\n${project.thesis}\n\n`;
+      }
+
+      userMessage += `HIPOTESIS ELEGIDA:\n`;
+      userMessage += `- Titulo: ${heRaw.titulo ?? '[sin titulo]'}\n`;
+      userMessage += `- Gancho: ${heRaw.gancho ?? '[sin gancho]'}\n`;
+      userMessage += `- Tipo: ${heRaw.tipo ?? '[sin tipo]'}\n`;
+      userMessage += `- Audiencia: ${heRaw.audiencia ?? '[sin audiencia]'}\n`;
+      userMessage += `- Tono: ${heRaw.tono ?? '[sin tono]'}\n`;
+      userMessage += `- Pregunta clave: ${heRaw.pregunta_clave ?? '[sin pregunta clave]'}\n`;
+      if (verifCriticas.length > 0) {
+        userMessage += `- Verificaciones criticas:\n`;
+        verifCriticas.forEach((v) => {
+          userMessage += `  * ${v}\n`;
+        });
+      }
+      if (heRaw.evidencia_requerida) {
+        userMessage += `- Evidencia requerida: ${heRaw.evidencia_requerida}\n`;
+      }
+      userMessage += `\n`;
+
+      // Fuentes del ODF
+      if (fuentes.length > 0) {
+        userMessage += `FUENTES DOCUMENTADAS (ODF):\n`;
+        fuentes.forEach((f, idx) => {
+          const fr = f as Record<string, unknown>;
+          userMessage += `${idx + 1}. Tipo: ${fr.tipo ?? '[sin tipo]'}\n`;
+          userMessage += `   Nombre/titulo: ${fr.nombre_titulo ?? '[sin nombre]'}\n`;
+          userMessage += `   Rol/origen: ${fr.rol_origen ?? '[sin rol]'}\n`;
+          userMessage += `   Estado: ${fr.estado ?? 'por_contactar'}\n`;
+          userMessage += `   Confianza: ${fr.confianza ?? 'media'}\n`;
+          if (fr.notas) userMessage += `   Notas: ${fr.notas}\n`;
+          if (fr.origen) userMessage += `   Origen: ${fr.origen}\n`;
+          userMessage += `\n`;
+        });
+      } else {
+        userMessage += `FUENTES DOCUMENTADAS (ODF): ninguna registrada en el expediente.\n\n`;
+      }
+
+      // Validaciones VHP previas (opcional)
+      const vhps = (project.data?.validacion_hipotesis_pista as unknown[] | undefined) ?? [];
+      if (vhps.length > 0) {
+        userMessage += `VALIDACIONES VHP PREVIAS:\n`;
+        vhps.forEach((v, idx) => {
+          const vr = v as Record<string, unknown>;
+          const ai = (vr.ai_response ?? {}) as Record<string, unknown>;
+          userMessage += `Validacion ${idx + 1}: veredicto=${ai.veredicto ?? '[sin veredicto]'}, score=${ai.viabilidad_score ?? '?'}\n`;
+        });
+        userMessage += `\n`;
+      } else {
+        userMessage += `VALIDACIONES VHP PREVIAS: ninguna registrada en este project.\n\n`;
+      }
+
+      // Iteraciones previas del Validador de Borrador (crítico para iteración)
+      const valBorrador = (project.data?.validaciones_borrador as unknown[] | undefined) ?? [];
+      if (valBorrador.length > 0) {
+        userMessage += `ITERACIONES PREVIAS DEL VALIDADOR DE BORRADOR:\n`;
+        valBorrador.forEach((v, idx) => {
+          const vr = v as Record<string, unknown>;
+          userMessage += `Iteracion ${idx + 1}: veredicto=${vr.veredicto ?? '[sin veredicto]'}, resumen=${vr.resumen ?? '[sin resumen]'}\n`;
+        });
+        userMessage += `\n`;
+      } else {
+        userMessage += `ITERACIONES PREVIAS DEL VALIDADOR DE BORRADOR: ninguna. Esta es la primera version del borrador.\n\n`;
+      }
+
+      // Notas opcionales del operador
+      if (borradorOperadorNotas.trim()) {
+        userMessage += `NOTAS ADICIONALES DEL OPERADOR: ${borradorOperadorNotas.trim()}\n`;
+      } else {
+        userMessage += `NOTAS ADICIONALES DEL OPERADOR: ninguna.\n`;
+      }
+
+      // Llamar al endpoint
+      const genRes = await fetch('/api/ai/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tool: 'generador_borrador',
+          tenantSlug: project.tenantSlug,
+          templateSlug: project.templateSlug,
+          projectId: project.id,
+          userMessage,
+        }),
+      });
+      const genJson = await genRes.json();
+      if (!genRes.ok) {
+        throw new Error(genJson.error || 'Error generando borrador');
+      }
+
+      // Parsear la respuesta
+      const parsed = parseBorradorFromRaw(genJson.result ?? {});
+      if (!parsed) {
+        throw new Error(
+          'El modelo devolvio una respuesta sin estructura de borrador valida. Intenta regenerar.'
+        );
+      }
+
+      const borradorPayload: BorradorData = {
+        ...parsed,
+        notasOperador: borradorOperadorNotas.trim() || undefined,
+        modo: genJson.mode,
+      };
+
+      // Persistir en data.borrador (singular, sobreescribe)
+      const patchRes = await fetch(`/api/projects/${project.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: { borrador: borradorPayload } }),
+      });
+      if (!patchRes.ok) {
+        const pj = await patchRes.json();
+        throw new Error(pj.error || 'Error guardando borrador');
+      }
+
+      await fetchProject();
+    } catch (err) {
+      setGenBorradorError(err instanceof Error ? err.message : 'Error desconocido');
+    } finally {
+      setGenerandoBorrador(false);
     }
   }
 
@@ -2689,6 +2947,37 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                   {borradorError && <p className="text-red-400 text-sm mt-3">{borradorError}</p>}
                 </div>
               )}
+
+            {/* ── Generador de Borrador (Chunk 8B-1: placeholder, UI completa en 8B-2) ── */}
+            {activeTool === 'borrador' && (
+              <div className="bg-space-cadet/40 border border-davy-gray/30 rounded-lg p-8 text-center">
+                <p className="text-seasalt text-lg mb-2">✍️ Generador de Borrador</p>
+                <p className="text-davy-gray text-sm">
+                  UI en construccion — Chunk 8B-2.
+                </p>
+                <p className="text-davy-gray/70 text-xs mt-4">
+                  Backend listo (Chunk 8A). Handler y estado cableados (Chunk 8B-1). La interfaz completa
+                  (panel de contexto, formulario, resultado) llega en el proximo sub-chunk.
+                </p>
+                {/* Wiring temporal para que TypeScript reconozca el uso de los estados del Chunk 8B-1.
+                    El boton no se renderiza visiblemente; queda oculto hasta 8B-2. */}
+                <button
+                  type="button"
+                  onClick={handleGenerateBorrador}
+                  disabled={generandoBorrador}
+                  className="hidden"
+                  aria-hidden="true"
+                  data-borrador-wiring="chunk8b1"
+                >
+                  {genBorradorError ? 'error' : 'wiring'}
+                </button>
+                <input
+                  type="hidden"
+                  value={borradorOperadorNotas}
+                  onChange={(e) => setBorradorOperadorNotas(e.target.value)}
+                />
+              </div>
+            )}
           </div>
         </section>
 
