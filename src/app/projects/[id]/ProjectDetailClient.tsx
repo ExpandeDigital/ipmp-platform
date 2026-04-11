@@ -335,7 +335,7 @@ const FAMILY_LABELS: Record<string, string> = {
 const PHASE_CONFIG: Record<string, PhaseConfig> = {
   draft: {
     tabs: [],
-    info: 'Borrador recién creado. Avanzá a Validación para generar hipótesis de investigación.',
+    info: 'Borrador recién creado. Avanza a Validación para generar hipótesis de investigación.',
   },
   validacion: {
     tabs: [
@@ -1125,7 +1125,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
       | undefined;
     if (!elegidaRaw || typeof elegidaRaw !== 'object' || !elegidaRaw.titulo) {
       setVhpError(
-        'Antes de validar una pista, elegí una hipótesis en el Generador de Hipótesis.'
+        'Antes de validar una pista, elige una hipótesis en el Generador de Hipótesis.'
       );
       return;
     }
@@ -2082,7 +2082,7 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                   </div>
 
                   <p className="text-davy-gray text-sm mb-4">
-                    Generá 3 a 5 hipótesis de investigación periodística sobre tu tema. Cada
+                    Genera 3 a 5 hipótesis de investigación periodística sobre tu tema. Cada
                     hipótesis incluye verificaciones críticas y evidencia requerida para guiar la
                     pesquisa.
                   </p>
@@ -2139,7 +2139,7 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                     🧪 Validador de Hipótesis y Pista
                   </h2>
                   <p className="text-davy-gray text-sm">
-                    Evaluá si un lead concreto que tenés a mano (una persona, un documento,
+                    Evalúa si un lead concreto que tienes a mano (una persona, un documento,
                     un dato, un testimonio) tiene capacidad real de sostener o refutar la
                     hipótesis elegida. El validador NO genera hipótesis nuevas: te dice si
                     avanzar con esa pista es viable, viable con reservas o no viable.
@@ -2149,7 +2149,7 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                 {!savedHipotesisElegida && (
                   <div className="bg-amber-brand/15 border border-amber-brand/40 rounded-lg p-4">
                     <p className="text-amber-brand text-sm">
-                      Primero elegí una hipótesis en el tab <strong>🔬 Generador de Hipótesis</strong>.
+                      Primero elige una hipótesis en el tab <strong>🔬 Generador de Hipótesis</strong>.
                       El VHP necesita una hipótesis elegida para evaluar el match con tu lead.
                     </p>
                   </div>
@@ -2245,7 +2245,7 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                         </div>
                         <p className="text-xs text-davy-gray/70 mt-2 leading-relaxed">
                           <strong className="text-davy-gray">Confirmado</strong>: ya hablaste/ya
-                          tenés el documento. <strong className="text-davy-gray">Probable</strong>:
+                          tienes el documento. <strong className="text-davy-gray">Probable</strong>:
                           contacto realista pendiente.{' '}
                           <strong className="text-davy-gray">Especulativo</strong>: idea sin
                           garantía de acceso.
