@@ -190,6 +190,41 @@ interface PitchData {
   notas_estrategicas: string;
   angulo_titulo: string;
   generadoEn: string;
+  // Chunk 11B: metadata de editor elegido
+  tierObjetivo?: number;
+  editorId?: string;
+  editorNombreSnapshot?: string;
+  editorMedioSnapshot?: string;
+}
+
+// Chunk 11B — Sugerencias de editores
+type MatchLevel = 'exacto' | 'sin_tipo' | 'sin_tenant';
+
+interface EditorSugerido {
+  editor: {
+    id: string;
+    nombre: string;
+    apellido: string;
+    medio: string;
+    seccion: string | null;
+    tier: number;
+    tenantsRelevantes: string[];
+    tipoPiezaRecomendado: string[];
+    email: string | null;
+    telefono: string | null;
+    notas: string | null;
+    activo: boolean;
+  };
+  match: MatchLevel;
+}
+
+interface SugerenciasMeta {
+  tenantSlug: string;
+  tier: number;
+  templateFamily: string;
+  totalExacto: number;
+  totalSinTipo: number;
+  totalSinTenant: number;
 }
 
 // Generador de Borrador — Chunk 8
@@ -658,6 +693,16 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
   const [construyendo, setConstruyendo] = useState(false);
   const [pitchError, setPitchError] = useState<string | null>(null);
 
+  // Chunk 11B — Panel de sugerencias de editores
+  const [tierObjetivo, setTierObjetivo] = useState<number>(1);
+  const [sugerencias, setSugerencias] = useState<EditorSugerido[]>([]);
+  const [sugerenciasMeta, setSugerenciasMeta] = useState<SugerenciasMeta | null>(null);
+  const [sugerenciasLoading, setSugerenciasLoading] = useState(false);
+  const [sugerenciasError, setSugerenciasError] = useState<string | null>(null);
+  const [editorElegidoId, setEditorElegidoId] = useState<string | null>(null);
+  const [editorElegidoNombre, setEditorElegidoNombre] = useState<string | null>(null);
+  const [editorElegidoMedio, setEditorElegidoMedio] = useState<string | null>(null);
+
   // Radar Editorial
   const [radarMedio, setRadarMedio] = useState('');
   const [radarUrl, setRadarUrl] = useState('');
@@ -762,6 +807,58 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project?.id]);
+
+  // Chunk 11B: hidratacion del tierObjetivo desde data.pitch.tierObjetivo
+  // al cargar un project nuevo. Depende solo de project?.id para que no se
+  // dispare en refetches del mismo project (que resetearian el tier cada
+  // vez que el operador lo cambia manualmente).
+  useEffect(() => {
+    const pitchData = (project?.data as { pitch?: PitchData })?.pitch;
+    if (pitchData?.tierObjetivo && typeof pitchData.tierObjetivo === 'number') {
+      setTierObjetivo(pitchData.tierObjetivo);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project?.id]);
+
+  // Chunk 11B: fetch automatico de sugerencias de editores cuando cambian
+  // tenant, templateFamily o tier. Debounce de 300ms para absorber cambios
+  // rapidos del dropdown de tier.
+  useEffect(() => {
+    if (!project?.hasTenant || !project.tenantSlug || !project.templateFamily) {
+      setSugerencias([]);
+      setSugerenciasMeta(null);
+      setSugerenciasError(null);
+      return;
+    }
+
+    const tenantSlug = project.tenantSlug;
+    const templateFamily = project.templateFamily;
+
+    const timer = setTimeout(async () => {
+      setSugerenciasLoading(true);
+      setSugerenciasError(null);
+      try {
+        const params = new URLSearchParams({
+          tenantSlug,
+          tier: String(tierObjetivo),
+          templateFamily,
+        });
+        const res = await fetch(`/api/editores/sugerencias?${params.toString()}`);
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || 'Error cargando sugerencias');
+        setSugerencias(json.sugerencias || []);
+        setSugerenciasMeta(json.meta || null);
+      } catch (err) {
+        setSugerenciasError(err instanceof Error ? err.message : 'Error desconocido');
+        setSugerencias([]);
+        setSugerenciasMeta(null);
+      } finally {
+        setSugerenciasLoading(false);
+      }
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [project?.hasTenant, project?.tenantSlug, project?.templateFamily, tierObjetivo]);
 
   // ── Cargar config para traspaso ──
   async function loadConfig() {
@@ -1334,6 +1431,23 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
   }
 
   // ── Construir pitch ──
+  // Chunk 11B: handler de click en una card de sugerencia.
+  // Toggle: si ya esta elegida, la deselecciona y limpia pitchMedio.
+  function handleElegirEditor(sug: EditorSugerido) {
+    const nombreCompleto = `${sug.editor.nombre} ${sug.editor.apellido}`.trim();
+    if (editorElegidoId === sug.editor.id) {
+      setEditorElegidoId(null);
+      setEditorElegidoNombre(null);
+      setEditorElegidoMedio(null);
+      setPitchMedio('');
+      return;
+    }
+    setEditorElegidoId(sug.editor.id);
+    setEditorElegidoNombre(nombreCompleto);
+    setEditorElegidoMedio(sug.editor.medio);
+    setPitchMedio(sug.editor.medio);
+  }
+
   async function handleConstruirPitch() {
     if (!project || !pitchAngulo.trim()) return;
     setConstruyendo(true);
@@ -1363,7 +1477,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
       if (!res.ok) throw new Error(json.error || 'Error construyendo pitch');
 
       const result = json.result ?? {};
-      const pitchPayload = {
+      const pitchPayload: Record<string, unknown> = {
         pitch: result.pitch ?? {},
         texto_completo: result.texto_completo ?? '',
         medio_destino: result.medio_destino ?? (pitchMedio.trim() || 'General'),
@@ -1371,6 +1485,16 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
         angulo_titulo: pitchAngulo.trim(),
         generadoEn: new Date().toISOString(),
       };
+
+      // Chunk 11B: persistir metadata de editor elegido y tier objetivo.
+      if (project.hasTenant) {
+        pitchPayload.tierObjetivo = tierObjetivo;
+      }
+      if (editorElegidoId && editorElegidoNombre && editorElegidoMedio) {
+        pitchPayload.editorId = editorElegidoId;
+        pitchPayload.editorNombreSnapshot = editorElegidoNombre;
+        pitchPayload.editorMedioSnapshot = editorElegidoMedio;
+      }
 
       await fetch(`/api/projects/${project.id}`, {
         method: 'PATCH',
@@ -2972,10 +3096,145 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                                text-seasalt placeholder:text-davy-gray/50 focus:outline-none
                                focus:border-amber-brand/50 text-sm"
                   />
+
+                  {/* Chunk 11B: Tier objetivo + panel de sugerencias */}
+                  {project.hasTenant && project.templateFamily ? (
+                    <>
+                      <div>
+                        <label className="block text-xs text-davy-gray mb-1">Tier objetivo del pitch</label>
+                        <select
+                          value={tierObjetivo}
+                          onChange={(e) => setTierObjetivo(parseInt(e.target.value, 10))}
+                          className="w-full bg-oxford-blue border border-davy-gray/30 rounded px-4 py-2
+                                     text-seasalt focus:outline-none focus:border-amber-brand/50 text-sm"
+                        >
+                          <option value={1}>Tier 1 — Nacional/Internacional</option>
+                          <option value={2}>Tier 2 — Regional</option>
+                          <option value={3}>Tier 3 — Sectorial</option>
+                          <option value={4}>Tier 4 — Nicho/Comunitario</option>
+                        </select>
+                        <p className="text-xs text-davy-gray/70 mt-1">
+                          Filtra editores con tier igual o más exigente que el objetivo.
+                        </p>
+                      </div>
+
+                      <div className="bg-oxford-blue/50 border border-davy-gray/20 rounded p-3">
+                        <div className="flex items-center justify-between mb-2">
+                          <h4 className="text-xs font-semibold text-seasalt uppercase tracking-wide">
+                            Editores sugeridos
+                          </h4>
+                          {sugerenciasMeta && (
+                            <span className="text-xs text-davy-gray">
+                              {sugerenciasMeta.totalExacto + sugerenciasMeta.totalSinTipo + sugerenciasMeta.totalSinTenant} resultados
+                            </span>
+                          )}
+                        </div>
+
+                        {sugerenciasLoading && (
+                          <p className="text-xs text-davy-gray">Cargando sugerencias…</p>
+                        )}
+                        {sugerenciasError && (
+                          <p className="text-xs text-red-400">{sugerenciasError}</p>
+                        )}
+                        {!sugerenciasLoading && !sugerenciasError && sugerencias.length === 0 && (
+                          <p className="text-xs text-davy-gray italic">
+                            No hay editores que cubran este tenant + tier + tipo de pieza. Podés escribir el medio destino manualmente o revisar la agenda en /admin/editores.
+                          </p>
+                        )}
+
+                        {!sugerenciasLoading && !sugerenciasError && sugerencias.length > 0 && (
+                          <div className="space-y-3">
+                            {(['exacto', 'sin_tipo', 'sin_tenant'] as MatchLevel[]).map((nivel) => {
+                              const grupo = sugerencias.filter((s) => s.match === nivel);
+                              if (grupo.length === 0) return null;
+                              const titulo =
+                                nivel === 'exacto' ? 'Match exacto' :
+                                nivel === 'sin_tipo' ? 'Tipo no confirmado' :
+                                'Tenant no listado';
+                              return (
+                                <div key={nivel}>
+                                  <p className="text-[10px] text-davy-gray uppercase tracking-wider mb-1">
+                                    {titulo} ({grupo.length})
+                                  </p>
+                                  <div className="space-y-1.5">
+                                    {grupo.map((sug) => {
+                                      const elegida = editorElegidoId === sug.editor.id;
+                                      const badgeClasses =
+                                        nivel === 'exacto' ? 'bg-green-500/10 border-green-500/30 text-green-400' :
+                                        nivel === 'sin_tipo' ? 'bg-amber-500/10 border-amber-500/30 text-amber-400' :
+                                        'bg-blue-500/10 border-blue-500/30 text-blue-400';
+                                      const badgeTexto =
+                                        nivel === 'exacto' ? 'Match exacto' :
+                                        nivel === 'sin_tipo' ? 'Tipo no confirmado' :
+                                        'Tenant no listado';
+                                      return (
+                                        <button
+                                          key={sug.editor.id}
+                                          type="button"
+                                          onClick={() => handleElegirEditor(sug)}
+                                          className={`w-full text-left px-3 py-2 rounded border transition-colors ${
+                                            elegida
+                                              ? 'bg-amber-brand/5 border-amber-brand'
+                                              : 'bg-oxford-blue border-davy-gray/30 hover:border-davy-gray/60'
+                                          }`}
+                                        >
+                                          <div className="flex items-start justify-between gap-2">
+                                            <div className="min-w-0 flex-1">
+                                              <p className="text-sm text-seasalt truncate">
+                                                {sug.editor.nombre} {sug.editor.apellido}
+                                                <span className="text-davy-gray"> · {sug.editor.medio}</span>
+                                                {sug.editor.seccion && (
+                                                  <span className="text-davy-gray"> · {sug.editor.seccion}</span>
+                                                )}
+                                              </p>
+                                              <p className="text-xs text-davy-gray mt-0.5">Tier {sug.editor.tier}</p>
+                                            </div>
+                                            <span className={`text-[10px] px-2 py-0.5 rounded border whitespace-nowrap ${badgeClasses}`}>
+                                              {badgeTexto}
+                                            </span>
+                                          </div>
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {editorElegidoId && editorElegidoNombre && (
+                          <div className="mt-3 pt-3 border-t border-davy-gray/20">
+                            <p className="text-xs text-amber-brand">
+                              Editor elegido: <span className="font-medium">{editorElegidoNombre}</span>
+                              <span className="text-davy-gray"> · {editorElegidoMedio}</span>
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="bg-oxford-blue/50 border border-davy-gray/20 rounded p-3">
+                      <p className="text-xs text-davy-gray italic">
+                        Asigná tenant y template al project para ver sugerencias de editores.
+                      </p>
+                    </div>
+                  )}
+
                   <input
                     type="text"
                     value={pitchMedio}
-                    onChange={(e) => setPitchMedio(e.target.value)}
+                    onChange={(e) => {
+                      const nuevoValor = e.target.value;
+                      setPitchMedio(nuevoValor);
+                      // Chunk 11B: si el operador edita manualmente y el valor ya no
+                      // coincide con el medio del editor elegido, desvinculamos.
+                      if (editorElegidoId && nuevoValor !== editorElegidoMedio) {
+                        setEditorElegidoId(null);
+                        setEditorElegidoNombre(null);
+                        setEditorElegidoMedio(null);
+                      }
+                    }}
                     placeholder="Medio destino (opcional, ej: La Tercera, El País)"
                     className="w-full bg-oxford-blue border border-davy-gray/30 rounded px-4 py-2
                                text-seasalt placeholder:text-davy-gray/50 focus:outline-none
