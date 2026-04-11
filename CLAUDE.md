@@ -143,18 +143,53 @@ The only hard gate today is `TRASPASO_REQUIRED` between `pesquisa` → `producci
 
 The Validador de Tono in `revision` is designed to audit the borrador produced by the Generador de Borrador in `produccion`. Since Chunk 8 does not exist yet, operators are pasting the pitch (built in `pesquisa`) into the validator as a workaround. This auto-resolves when Chunk 8 lands. Until then, consider adding a visual note inside the Validador de Borrador tab: "in normal operation this tool audits the borrador generated in the produccion phase".
 
+## Hallazgos de validacion — Chunk 7 (11 abril 2026)
+
+End-to-end validation in production of the two tools shipped in Chunk 7 (ODF + VHP). Both tools were built in the same operator session (Parte A: ODF, Parte B: VHP) and validated against a freshly-created throwaway project running the full pipeline draft -> validacion -> pesquisa with hypothesis generation, election, and the VHP-to-ODF auto-promotion on the validacion -> pesquisa advance. Everything works as designed. Three usability findings surfaced during validation, none of them bugs in Chunk 7 code — they are either scope revelations for future iteration or preexisting gaps from Chunk 6 that the testing process exposed.
+
+### a) ODF captures source metadata only, not source content
+
+The ODF form as shipped persists `tipo`, `nombre_titulo`, `rol_origen`, `estado`, `confianza`, `notas` and `fecha_registro`. It does NOT offer a URL field nor a file upload input. For a forensic investigation platform, a documentary source without access to the document itself is half a source. Two distinct sub-gaps to resolve separately in later chunks:
+
+- **(a1) Free-text URL field per fuente** — trivial to add (one string input bound to a new optional `url` field in the `Fuente` interface, retrocompat-safe because it is optional). Does not require storage infrastructure. Appropriate for Chunk 9.
+- **(a2) Real file upload to object storage** — non-trivial. Requires Vercel Blob or S3-equivalent, signed URL lifecycle, MIME validation, max file size policy, and a deletion contract (what happens to the file when the fuente is deleted). This likely belongs to a dedicated chunk or as part of the "Asset Library per tenant" already mentioned in `doc/IP_MP_ESTADO_MAESTRO.md` section 7. Not Chunk 9 scope.
+
+### b) Validador del Borrador historial has no curation affordances (preexisting Chunk 6 gap exposed during Chunk 7 testing)
+
+This finding is NOT caused by Chunk 7 — it was uncovered while the operator was testing the VHP flow and happened to open an unrelated project in `revision` phase (project on Codigo Maestro Soberano with 3 accumulated iterations of the borrador validator). The Validador de Tono del Borrador in `revision` persists every analysis as a new item in `data.validaciones_borrador[]` with no way to: (1) mark one of the iterations as the operator's canonical verdict, (2) delete obsolete iterations (no_publicable ones from earlier draft versions that have since been rewritten). Consequence: the history grows unbounded and the "final" verdict for the project is not machine-readable.
+
+Proposed fix for Chunk 9 (inherits the pattern from Chunk 6 `hipotesis_elegida` and from Chunk 7 ODF delete):
+- Add two buttons per historial entry: "Marcar como definitiva" (persists the entry id into `data.validacion_borrador_definitiva_id`) and "Eliminar" (removes the entry with confirm dialog).
+- Surface the chosen entry with a visible badge in the historial and in the pipeline bar cell of `revision` (mirroring the `elegida` badge of Chunk 6).
+
+Related to but distinct from finding (f) of Chunk 6 (the Validador de Tono currently audits the wrong text because Chunk 8 does not yet exist). Both findings live in the same module and should be tracked together.
+
+### c) VHP locked tab shows a guidance message but no navigation shortcut
+
+When an operator enters the VHP tab in fase `validacion` without having elected a hypothesis yet, the tab renders a yellow informational box with the text "Primero elegi una hipotesis en el tab Generador de Hipotesis. El VHP necesita una hipotesis elegida para evaluar el match con tu lead." This is Option 1 of the UX decision made at design time (tab always visible with guidance placeholder vs. tab hidden until precondition met). The message mentions the target tab by name and in bold, but does NOT include a clickable button that calls `setActiveTool('hipotesis')` to jump back. The operator must click the sibling tab manually in the top tab bar.
+
+Trivial to resolve in Chunk 9: add a secondary button below the message bound to `setActiveTool('hipotesis')`. 4 lines of JSX. Consistent with the "guide the operator to the unblock action" principle.
+
+### Notes on the successful validation run
+
+- The VHP to ODF auto-promotion was validated end-to-end: a lead validated with veredicto `viable_con_reservas` on an acceso `probable` (which correctly capped the score per the score-ceiling rule in the prompt) was automatically persisted as a fuente in `data.fuentes[]` at the moment of the `validacion -> pesquisa` advance, with `origen: 'vhp'` and `origen_validacion_id` linking back to the validation entry. The idempotency flag `promovida_a_fuente` correctly prevented duplication on retreat/advance cycles.
+- The score-ceiling rule added to the VHP prompt (`especulativo` max 60, `probable` max 80, `confirmado` full 0-100) shipped and is enforced by the model. Anti-fabrication principle preserved from Chunk 6.
+- The brand-alignment layer in the MetricPress VHP prompt was implemented as injected findings inside `riesgos` and `recomendaciones` rather than as a new JSON key, keeping the IP and MP contracts identical and simplifying the frontend parser. Guardrail "brand context cannot inflate the score" is explicit in the prompt.
+- Orden de tabs in fase `pesquisa` shipped as `[odf, pitch, radar]` — ODF first, to match the mental model that `pesquisa` logically starts by cataloging sources.
+
 ## Roadmap
 
 Confirmed chunk ordering after Chunk 6 validation (10 abril 2026). Each chunk should preserve the Chunk 6 retrocompat contract: projects created under older chunks must keep rendering without writes to any of the new `data.*` keys.
 
-### Chunk 7 — VHP rescue + ODF (next priority)
+### Chunk 7 — VHP + ODF [COMPLETADO 11 abril 2026]
 
-- **Validador de Hipótesis y Pista (VHP)** — new tool in the `validacion` phase, complementary to the Generador de Hipótesis. Input: `hipotesis_elegida` + a concrete lead from the operator (an available source, a document, a contact). Output: a viability score + recommendations. Persisted in `data.validaciones_hipotesis[]`.
-- **Organizador de Fuentes Forenses (ODF)** — new tool in the `pesquisa` phase. Structured CRUD of sources with fields: `tipo` (`persona` | `documento` | `dato` | `testimonio`), name/title, role/origin, `estado` (`por_contactar` | `contactada` | `verificada` | `descartada`), `confianza` (`baja` | `media` | `alta`), notes, `fecha_registro`. Persisted in `data.fuentes[]`.
-- **Source counter badge** on the pipeline bar over the `pesquisa` cell, same pattern as the `⭐ elegida` badge Chunk 6 added on `validacion`.
-- **Retrocompat**: pre-Chunk 7 projects must render correctly without either array present.
+Cerrado en una sola sesion de trabajo, desplegado en produccion en 2 commits:
+- `8c20734` feat(chunk7a): ODF — CRUD puro de fuentes forenses en fase `pesquisa`, con badge contador en la pipeline bar y retrocompat sobre `data.fuentes[]`.
+- `a69160a` feat(chunk7b): VHP — herramienta IA en fase `validacion`, con auto-promocion backend-atomic de leads validados a `data.fuentes[]` en la transicion `validacion -> pesquisa`, y nuevo campo `origen: 'vhp'` en `Fuente` para trazabilidad.
 
-### Chunk 8 — Generador de Borrador (after Chunk 7)
+Hallazgos de validacion: ver seccion "Hallazgos de validacion — Chunk 7 (11 abril 2026)" mas arriba.
+
+### Chunk 8 — Generador de Borrador (next priority)
 
 - New tool in the `produccion` phase (currently a placeholder).
 - Input context: `hipotesis_elegida` + `pitch` + `fuentes` (from ODF) + `radar_editorial` audits + `validaciones_borrador` previous iterations + `thesis` + tenant + template.
@@ -172,3 +207,6 @@ Confirmed chunk ordering after Chunk 6 validation (10 abril 2026). Each chunk sh
 - Remove the `dato_referencial` category from the prompt (finding "b").
 - UX polish driven by real usage feedback.
 - Basic exporter implementation for the `exportado` phase.
+- Campo URL libre por fuente en ODF (finding "a1" del Chunk 7) — input opcional de texto, sin infraestructura de storage.
+- Curacion del historial del Validador de Borrador (finding "b" del Chunk 7, preexistente de Chunk 6) — boton "Marcar como definitiva" + boton "Eliminar" por entrada, patron identico al de `hipotesis_elegida`.
+- Boton de navegacion en el placeholder del tab VHP bloqueado (finding "c" del Chunk 7) — secondary button debajo del mensaje que dispare `setActiveTool('hipotesis')`.
