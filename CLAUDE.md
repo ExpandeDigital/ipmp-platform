@@ -85,7 +85,7 @@ The pipeline has **two phases** gated by a "traspaso" (handoff) event. Most of t
    - AI calls use `IP_PROMPT_BUILDERS` from `src/lib/ai/prompts.ts` — no tenant/template context is injected into the system prompt. Consumption is logged against the `investigapress` tenant.
 
 2. **MetricPress (MP) phase** — branded production.
-   - Pipeline statuses: `produccion`, `visual`, `revision`, `aprobado`, `exportado`.
+   - Pipeline statuses: `produccion`, `revision`, `aprobado`, `visual`, `exportado`.
    - The handoff happens via `PATCH /api/projects/[id]` with `tenantSlug` + `templateSlug` (and optional `brandVariant`). This:
      - Resolves and sets `tenantId`/`templateId`.
      - Copies `template.defaultClassification` into the project.
@@ -395,6 +395,58 @@ El refactor del Constructor de Pitch en 12E dejo codigo muerto en `ProjectDetail
 - La regla de idioma neutro (`IDIOMA_NEUTRO_RULE`) del 12B se inyecto en 5 funciones build* IP + 1 funcion build*MP (buildGeneradorBorradorPromptMP). Las 4 funciones build*MP restantes heredan la regla automaticamente del base via `const basePrompt = build*()`. El stub IP de buildGeneradorBorradorPrompt se salto porque es un mensaje de error, no un prompt real.
 - El incidente del CLAUDE.md desfasado entre sesiones (descubierto en 12A) motivo la creacion de la seccion "Workflow operativo entre sesiones" con las dos disciplinas de "una sesion un chunk" y "snapshot del estado del repo al inicio de cada chat". Ambas disciplinas se validaron empiricamente en la sesion del Chunk 12.
 
+## Hallazgos de validacion — Chunk 14 (12 abril 2026)
+
+### a) Reordenamiento del pipeline validado en produccion
+
+El sub-chunk 14A movio la fase 'visual' desde su posicion anterior
+(entre 'produccion' y 'revision') a su posicion correcta (entre
+'aprobado' y 'exportado'). El cambio requirio dos ediciones:
+PIPELINE_ORDER en route.ts (una linea) y el soft gate de 12C en
+ProjectDetailClient.tsx (cambio de target 'produccion->visual' a
+'produccion->revision'). El pipeline bar renderizado desde
+project.pipelinePhases confirmo el nuevo orden en produccion via
+hard refresh despues del deploy.
+
+Hallazgo operativo: la validacion local con npm run start fallo por
+ERR_CONNECTION_REFUSED en el browser. El servidor de produccion Next.js
+requiere que la terminal de Git Bash permanezca abierta y que se use
+la IP de red (192.168.x.x:3000) en vez de localhost cuando el browser
+rechaza la conexion local. Para futuros chunks: validar directamente
+en Vercel despues del push cuando la validacion local sea impractica.
+
+### b) Tab Visual: generador de prompt estructurado validado en campo
+
+El sub-chunk 14B implemento el tab Visual como generador de prompt
+estructurado (no generador de imagen). Validado en campo con el project
+del candombe: el modelo recibio el borrador aprobado y produjo un JSON
+con las 6 claves del contrato (descripcion_imagen, estilo,
+paleta_mood, composicion, formato_proporciones, instruccion_uso).
+La regla anti-fabricacion se respeto: todos los elementos visuales
+descritos estan presentes en el borrador. El estilo elegido
+(fotografia_documental) fue coherente con el genero academico del
+template. El prompt de salida es directamente usable en Midjourney
+con el parametro --ar del formato recomendado.
+
+Decision de diseno confirmada: el tab Visual opera sobre el borrador
+aprobado, no sobre el borrador en produccion. Esta decision es
+arquitectonicamente correcta porque garantiza que el prompt visual
+refleja el contenido editorial definitivo, no un borrador en revision.
+
+### c) Decision 14C documentada: Bitacora de Pesquisa Externa como workflow externo
+
+La Bitacora de Pesquisa Externa NO es una feature de IPMP. Es un
+workflow externo donde el Investigador Senior AI vive en Claude.ai MAX
+con busqueda web activa. El flujo operativo es: IPMP exporta el
+documento de pesquisa via el exportador ZIP del 13B, el operador lo
+lleva a Claude.ai MAX manualmente, Claude.ai MAX verifica y contrasta,
+el operador carga la fuente verificada al ODF de IPMP manualmente.
+El costo corre contra la suscripcion MAX de tarifa plana, no contra
+la API Console por token. Esta decision es coherente con el Principio 4
+de filantropia digital (portabilidad) y con el principio "asiste, no
+automatiza" del Chunk 12. No hay nada que construir en IPMP para este
+workflow.
+
 ## Hallazgos de validacion — Chunk 13 (12 abril 2026)
 
 ### a) Cleanup codigo muerto post-12E ejecutado sin fricciones
@@ -531,10 +583,25 @@ Hallazgos de validacion: ver seccion "Hallazgos de validacion — Chunk 12 (12 a
 - **13B** `9d74c15` feat(chunk13b): exportador basico ZIP fase exportado.
 - **13C** `79beaa1` docs(chunk13c): cierre documental Chunk 13.
 
-### Chunk 14+ — Futuros (sin orden definitivo)
+### Chunk 14 — Reordenamiento Visual y Generador de Prompt [COMPLETADO 12 abril 2026]
+
+- **14A** `a0b9595` feat(chunk14a): mover fase visual al final del pipeline post-aprobado.
+- **14B** `3b4b6e2` feat(chunk14b): tab Visual generador de prompt estructurado fase visual.
+- **14C** Sin codigo — decision documentada en hallazgos 14G (Bitacora como workflow externo).
+- **14G** `[HASH]` docs(chunk14g): cierre documental Chunk 14.
+
+Decision arquitectonica registrada: el tab Visual opera como generador
+de prompt estructurado, no como generador de imagen. La posicion
+correcta en el pipeline es despues de 'aprobado' y antes de 'exportado'.
+El prompt generado incluye 6 claves derivadas del borrador aprobado y
+es directamente usable en herramientas externas de generacion de imagen.
+El modelo actua como director de arte periodistico: no inventa elementos
+visuales ausentes del borrador.
+
+### Chunk 15+ — Futuros (sin orden definitivo)
 
 - Upload real de documentos fuente en el ODF: infraestructura de storage (Vercel Blob o S3), signed URLs, MIME validation, max file size, deletion contract. El chunk mas grande pendiente.
 - Asset library per tenant con versionado y metadata obligatoria (declaracion IA, alt text, origen).
-- Bitacora de Pesquisa Externa con trazabilidad de hallazgos por motor: registrar cada exportacion con que motor se uso, que hallazgos se promovieron al ODF y cuales se descartaron. Implementar cuando la plataforma se abra a operadores externos.
+- Bitacora de Pesquisa Externa con trazabilidad de hallazgos por motor: workflow externo documentado en 14C. Feature de plataforma diferida: registrar cada exportacion con que motor se uso, que hallazgos se promovieron al ODF y cuales se descartaron. Implementar cuando la plataforma se abra a operadores externos.
 - Cleanup canal de errores del Validador de Borrador: posible consolidacion de borradorError y genBorradorError en un solo namespace cuando la arquitectura de errores evolucione.
 - Actualizacion de fuentes en proyecto exportado: permitir reemplazar una fuente del ODF por una version actualizada (V2) sin perder el historial de la V1. Identificado como necesidad operativa en la validacion de campo del Chunk 13B.
