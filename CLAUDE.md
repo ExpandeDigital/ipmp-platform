@@ -649,9 +649,37 @@ signed URLs. El contrato de deletion es best-effort: el blob se elimina
 antes que la fuente, pero si falla, la fuente se elimina igual. Los blobs
 huerfanos son recuperables desde el dashboard de Vercel.
 
-### Chunk 16+ — Futuros (sin orden definitivo)
+### Chunk 16 — Actualizacion de fuentes V2 en el ODF [COMPLETADO 12 abril 2026]
+
+- 16A Sin codigo — decision documentada: los dos canales de error
+  borradorError y genBorradorError son disjuntos, viven en tabs
+  distintos, y el prefijo gen ya los distingue. La consolidacion
+  en un objeto errors seria abstraccion prematura sin consumidor
+  que la justifique. El patron de namespace por prefijo (gen* para
+  generadores, sin prefijo para validadores) documentado en Chunk 8
+  se mantiene como convencion activa.
+
+- `d388d50` feat(chunk16b): actualizacion fuentes V2 con historial V1
+  en ODF. Interfaz Fuente: 4 campos opcionales nuevos (archivo_url_v1,
+  archivo_nombre_v1, archivo_size_v1, archivo_replaced_at).
+  parseFuenteFromRaw: parsing de los 4 campos con type guards.
+  handleUploadArchivo: backup de campos actuales a _v1 ocurre solo
+  despues de upload exitoso — si falla, fuente queda intacta.
+  UI card ODF: boton "Reemplazar archivo (V2)" cuando ya existe archivo,
+  badge "V2 activa - V1 archivada" cuando archivo_replaced_at existe.
+  Nota: archivo_size_v1 queda undefined en el primer reemplazo porque
+  archivo_size no se persistia en el upload inicial (Chunk 15). Se
+  populara automaticamente en reemplazos sucesivos.
+
+- **16G** `[HASH]` docs(chunk16g): cierre documental Chunk 16.
+
+Decision arquitectonica registrada: el contrato de V2 es aditivo, no
+destructivo. El blob V1 no se elimina — queda referenciado en
+archivo_url_v1 para trazabilidad forense. Solo el archivo activo
+(archivo_url) es visible al operador. El V1 es recuperable desde
+el dashboard de Vercel Blob si se necesita.
+
+### Chunk 17+ — Futuros (sin orden definitivo)
 
 - Asset library per tenant con versionado y metadata obligatoria (declaracion IA, alt text, origen).
 - Bitacora de Pesquisa Externa con trazabilidad de hallazgos por motor: workflow externo documentado en 14C. Feature de plataforma diferida: registrar cada exportacion con que motor se uso, que hallazgos se promovieron al ODF y cuales se descartaron. Implementar cuando la plataforma se abra a operadores externos.
-- Cleanup canal de errores del Validador de Borrador: posible consolidacion de borradorError y genBorradorError en un solo namespace cuando la arquitectura de errores evolucione.
-- Actualizacion de fuentes en proyecto exportado: permitir reemplazar una fuente del ODF por una version actualizada (V2) sin perder el historial de la V1. Identificado como necesidad operativa en la validacion de campo del Chunk 13B.
