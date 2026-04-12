@@ -4,7 +4,6 @@
  * POST /api/fuentes/upload
  *
  * Body: FormData con campos 'file' (File) y 'fuenteId' (string)
- * Auth: header Authorization debe coincidir con ADMIN_TOKEN
  *
  * Sube el archivo a Vercel Blob bajo el path fuentes/{fuenteId}/{filename}
  * con access público. Retorna la URL del blob.
@@ -34,20 +33,6 @@ function sanitizeFilename(name: string): string {
 }
 
 export async function POST(request: NextRequest) {
-  // Auth
-  const expected = process.env.ADMIN_TOKEN;
-  if (!expected) {
-    return NextResponse.json(
-      { error: 'ADMIN_TOKEN no configurado en el servidor' },
-      { status: 500 }
-    );
-  }
-
-  const auth = request.headers.get('Authorization');
-  if (!auth || auth !== expected) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
   try {
     const formData = await request.formData();
     const file = formData.get('file');

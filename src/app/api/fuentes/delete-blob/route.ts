@@ -4,7 +4,6 @@
  * DELETE /api/fuentes/delete-blob
  *
  * Body JSON: { url: string }
- * Auth: header Authorization debe coincidir con ADMIN_TOKEN
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -13,20 +12,6 @@ import { del } from '@vercel/blob';
 export const dynamic = 'force-dynamic';
 
 export async function DELETE(request: NextRequest) {
-  // Auth
-  const expected = process.env.ADMIN_TOKEN;
-  if (!expected) {
-    return NextResponse.json(
-      { error: 'ADMIN_TOKEN no configurado en el servidor' },
-      { status: 500 }
-    );
-  }
-
-  const auth = request.headers.get('Authorization');
-  if (!auth || auth !== expected) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
   try {
     const body = await request.json();
     const url = typeof body?.url === 'string' ? body.url : '';

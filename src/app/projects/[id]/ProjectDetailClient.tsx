@@ -123,6 +123,9 @@ interface Fuente {
   fecha_registro: string;
   // Chunk 9C (C1): URL libre opcional. Texto plano sin validacion de formato.
   url?: string;
+  // Chunk 15B: archivo adjunto vía Vercel Blob
+  archivo_url?: string;
+  archivo_nombre?: string;
   // Trazabilidad: cuando una fuente fue auto-promovida desde el VHP (Chunk 7B)
   origen?: 'manual' | 'vhp';
   origen_validacion_id?: string;
@@ -519,6 +522,8 @@ function parseFuenteFromRaw(f: Record<string, unknown>): Fuente {
     confianza,
     notas: String(f.notas ?? ''),
     url: typeof f.url === 'string' && f.url ? f.url : undefined,
+    archivo_url: typeof f.archivo_url === 'string' ? f.archivo_url : undefined,
+    archivo_nombre: typeof f.archivo_nombre === 'string' ? f.archivo_nombre : undefined,
     fecha_registro:
       typeof f.fecha_registro === 'string' && f.fecha_registro
         ? f.fecha_registro
@@ -815,6 +820,9 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
   const [odfGuardando, setOdfGuardando] = useState(false);
   const [odfError, setOdfError] = useState<string | null>(null);
   const [odfEditandoId, setOdfEditandoId] = useState<string | null>(null);
+  // Chunk 15B: upload de archivos por fuente
+  const [odfUploadingId, setOdfUploadingId] = useState<string | null>(null);
+  const [odfUploadError, setOdfUploadError] = useState<string | null>(null);
 
   // Active tool (default se reajusta por useEffect según fase)
   const [activeTool, setActiveTool] = useState<ActiveTool>('hipotesis');
@@ -2062,6 +2070,73 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
       setOdfError(err instanceof Error ? err.message : 'Error al eliminar fuente');
     } finally {
       setOdfGuardando(false);
+    }
+  }
+
+  // ── Upload / Delete de archivo adjunto por fuente — Chunk 15B ──
+  async function handleUploadArchivo(fuenteId: string, file: File) {
+    if (!project) return;
+    setOdfUploadingId(fuenteId);
+    setOdfUploadError(null);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('fuenteId', fuenteId);
+      const res = await fetch('/api/fuentes/upload', {
+        method: 'POST',
+        body: formData,
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        setOdfUploadError(json.error || 'Error al subir archivo');
+        return;
+      }
+      const fuentesActuales: Fuente[] = Array.isArray(project.data?.fuentes)
+        ? (project.data.fuentes as unknown[]).map((f) =>
+            parseFuenteFromRaw(f as Record<string, unknown>)
+          )
+        : [];
+      const actualizadas = fuentesActuales.map((f) =>
+        f.id === fuenteId
+          ? { ...f, archivo_url: json.url as string, archivo_nombre: file.name }
+          : f
+      );
+      await persistirFuentes(actualizadas);
+    } catch (err) {
+      setOdfUploadError(err instanceof Error ? err.message : 'Error al subir archivo');
+    } finally {
+      setOdfUploadingId(null);
+    }
+  }
+
+  async function handleDeleteArchivo(fuenteId: string, archivoUrl: string) {
+    if (!project) return;
+    if (!confirm('¿Eliminar el archivo adjunto de esta fuente?')) return;
+    setOdfUploadError(null);
+    try {
+      const res = await fetch('/api/fuentes/delete-blob', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: archivoUrl }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        setOdfUploadError(json.error || 'Error al eliminar archivo');
+        return;
+      }
+      const fuentesActuales: Fuente[] = Array.isArray(project.data?.fuentes)
+        ? (project.data.fuentes as unknown[]).map((f) =>
+            parseFuenteFromRaw(f as Record<string, unknown>)
+          )
+        : [];
+      const actualizadas = fuentesActuales.map((f) =>
+        f.id === fuenteId
+          ? { ...f, archivo_url: undefined, archivo_nombre: undefined }
+          : f
+      );
+      await persistirFuentes(actualizadas);
+    } catch (err) {
+      setOdfUploadError(err instanceof Error ? err.message : 'Error al eliminar archivo');
     }
   }
 
@@ -3353,11 +3428,63 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                           {f.notas && (
                             <p className="text-davy-gray/80 text-xs mt-2 italic">{f.notas}</p>
                           )}
+                          {/* Chunk 15B: archivo adjunto */}
+                          <div className="mt-2">
+                            {f.archivo_url ? (
+                              <div className="flex items-center gap-2">
+                                <a
+                                  href={f.archivo_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-amber-brand text-xs hover:underline break-all"
+                                >
+                                  📄 {f.archivo_nombre || 'Archivo adjunto'}
+                                </a>
+                                <button
+                                  onClick={() => handleDeleteArchivo(f.id, f.archivo_url!)}
+                                  className="text-davy-gray hover:text-red-400 text-xs px-1"
+                                  title="Eliminar archivo"
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                            ) : (
+                              <>
+                                <input
+                                  type="file"
+                                  id={`file-input-${f.id}`}
+                                  accept=".pdf,.jpg,.jpeg,.png,.webp,.txt,.doc,.docx"
+                                  className="hidden"
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) handleUploadArchivo(f.id, file);
+                                    e.target.value = '';
+                                  }}
+                                />
+                                {odfUploadingId === f.id ? (
+                                  <span className="text-davy-gray text-xs animate-pulse">Subiendo...</span>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => document.getElementById(`file-input-${f.id}`)?.click()}
+                                    className="text-xs text-davy-gray hover:text-amber-brand transition-colors"
+                                  >
+                                    📎 Adjuntar archivo
+                                  </button>
+                                )}
+                              </>
+                            )}
+                          </div>
                           <p className="text-davy-gray/50 text-[10px] mt-2">
                             Registrada: {new Date(f.fecha_registro).toLocaleString('es-CL')}
                           </p>
                         </div>
                       ))}
+                    </div>
+                  )}
+                  {odfUploadError && (
+                    <div className="bg-red-500/10 border border-red-500/40 rounded p-3 mt-3">
+                      <p className="text-red-400 text-sm">{odfUploadError}</p>
                     </div>
                   )}
                 </div>
