@@ -580,6 +580,81 @@ function parseBorradorFromRaw(raw: Record<string, unknown>): BorradorData | null
   return { borrador, metadata, notas_editoriales: notas, generadoEn, notasOperador, modo };
 }
 
+// Chunk 12B: builder del texto del exportador de pesquisa externa.
+// Genera el prompt pre-formateado que el operador va a copiar y
+// pegar en una conversacion nueva de Claude.ai (el motor de
+// investigacion externo, con web search nativa).
+function buildTextoExportadorPesquisa(
+  proj: ProjectDetail,
+  borrador: BorradorData
+): string {
+  const titulo = proj.title || '(sin titulo)';
+  const fase = proj.status || '(sin fase)';
+
+  const hipotesisElegida = (proj.data?.hipotesis_elegida as Record<string, unknown>) ?? null;
+  const hipotesisTitulo =
+    hipotesisElegida && typeof hipotesisElegida.titulo === 'string'
+      ? hipotesisElegida.titulo
+      : '(sin hipotesis elegida)';
+
+  const verificacionesPendientes = Array.isArray(borrador.metadata?.verificaciones_criticas_pendientes)
+    ? borrador.metadata.verificaciones_criticas_pendientes
+    : [];
+
+  const advertencias = Array.isArray(borrador.metadata?.advertencias_verificacion)
+    ? borrador.metadata.advertencias_verificacion
+    : [];
+
+  const tenantSlug = proj.tenantSlug ?? null;
+  let geografiaInstruccion: string;
+  if (tenantSlug === 'dreamoms') {
+    geografiaInstruccion = 'Geografia: prioriza fuentes de Chile (medios chilenos, instituciones chilenas, archivos academicos chilenos). Cuando una pregunta requiera contexto regional, puedes incluir fuentes del Cono Sur en general.';
+  } else {
+    geografiaInstruccion = 'Geografia: prioriza fuentes en espanol de cualquier pais de habla hispana, especialmente del Cono Sur (Chile, Argentina, Uruguay) cuando aplique al tema.';
+  }
+
+  const bloque1 = 'Necesito ayuda para investigar un conjunto de verificaciones criticas pendientes para una nota periodistica. Este es el contexto del project:';
+
+  const bloque2 = `PROJECT: ${titulo}
+FASE ACTUAL: ${fase}
+HIPOTESIS ELEGIDA: ${hipotesisTitulo}`;
+
+  const bloque3 =
+    verificacionesPendientes.length > 0
+      ? 'VERIFICACIONES CRITICAS PENDIENTES (estas son las preguntas estructurales que necesito que investigues con prioridad alta):\n' +
+        verificacionesPendientes
+          .map((v, i) => `${i + 1}. ${v}`)
+          .join('\n')
+      : 'VERIFICACIONES CRITICAS PENDIENTES: (ninguna registrada — el borrador no tiene este campo o esta vacio)';
+
+  const bloque4 =
+    advertencias.length > 0
+      ? 'OTRAS SENALES DEL BORRADOR QUE PUEDEN NECESITAR VERIFICACION (contexto secundario, no son las preguntas principales):\n' +
+        advertencias.map((a) => `- ${a}`).join('\n')
+      : '';
+
+  const bloque5 = `INSTRUCCIONES PARA VOS, CLAUDE.AI:
+Por favor investiga cada pregunta numerada de la seccion "VERIFICACIONES CRITICAS PENDIENTES" usando tu herramienta de busqueda web nativa. Para cada hallazgo devolveme:
+(a) el hallazgo en una o dos oraciones,
+(b) la fuente original con URL si aplica,
+(c) tu nivel de confianza (alta / media / baja),
+(d) una cita textual breve cuando corresponda.
+
+Si una pregunta no tiene respuesta clara en fuentes confiables, decimelo explicitamente en vez de inventar una respuesta plausible. Es preferible que me reportes "no encontre evidencia confiable sobre X" antes que entregarme un hallazgo dudoso.
+
+Una vez que tengas los hallazgos, los voy a cargar manualmente como fuentes en mi plataforma (en el Organizador de Fuentes Forenses), y desde ahi el sistema regenera el borrador con la evidencia incorporada.`;
+
+  const bloque6 = `IDIOMA Y GEOGRAFIA:
+Idioma: espanol neutro internacional, sin regionalismos rioplatenses ("vos", "tenes", "queres") ni chilenismos.
+${geografiaInstruccion}`;
+
+  const bloques = [bloque1, bloque2, bloque3];
+  if (bloque4) bloques.push(bloque4);
+  bloques.push(bloque5, bloque6);
+
+  return bloques.join('\n\n');
+}
+
 function parseValidacionHipotesisFromRaw(
   v: Record<string, unknown>
 ): ValidacionHipotesisEntry {
@@ -748,6 +823,10 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
   const [borradorOperadorNotas, setBorradorOperadorNotas] = useState('');
   const [generandoBorrador, setGenerandoBorrador] = useState(false);
   const [genBorradorError, setGenBorradorError] = useState<string | null>(null);
+
+  // Chunk 12B: modal del exportador de pesquisa externa
+  const [exportadorAbierto, setExportadorAbierto] = useState(false);
+  const [exportadorCopiado, setExportadorCopiado] = useState(false);
 
   // ── Cargar project ──
   const fetchProject = useCallback(async () => {
@@ -1301,6 +1380,40 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
       setGenBorradorError(err instanceof Error ? err.message : 'Error desconocido');
     } finally {
       setGenerandoBorrador(false);
+    }
+  }
+
+  // Chunk 12B: handler de copia al portapapeles del exportador.
+  async function handleCopiarExportador() {
+    if (!project) return;
+    const borrador = parseBorradorFromRaw(
+      (project.data?.borrador as Record<string, unknown>) ?? {}
+    );
+    if (!borrador) return;
+
+    const texto = buildTextoExportadorPesquisa(project, borrador);
+
+    try {
+      await navigator.clipboard.writeText(texto);
+      setExportadorCopiado(true);
+      setTimeout(() => setExportadorCopiado(false), 2500);
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = texto;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      try {
+        document.execCommand('copy');
+        setExportadorCopiado(true);
+        setTimeout(() => setExportadorCopiado(false), 2500);
+      } catch {
+        alert('No se pudo copiar automaticamente. Usa Ctrl+C en el textarea del modal.');
+      } finally {
+        document.body.removeChild(ta);
+      }
     }
   }
 
@@ -3834,6 +3947,14 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                       <div className="border-t border-davy-gray/30 pt-4 flex flex-wrap gap-3">
                         <button
                           type="button"
+                          onClick={() => setExportadorAbierto(true)}
+                          className="px-4 py-2 bg-amber-brand/20 text-amber-brand border border-amber-brand/40
+                                     rounded hover:bg-amber-brand/30 transition-colors text-sm"
+                        >
+                          Exportar verificaciones para investigacion externa
+                        </button>
+                        <button
+                          type="button"
                           onClick={handleCopiar}
                           className="bg-davy-gray/30 hover:bg-davy-gray/50 text-seasalt text-sm px-4 py-2 rounded transition-colors"
                         >
@@ -4385,6 +4506,60 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
           </section>
         )}
       </div>
+
+      {/* Chunk 12B: Modal del exportador de pesquisa externa */}
+      {exportadorAbierto && project && !!(project.data?.borrador) && (
+        <div
+          className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4"
+          onClick={() => setExportadorAbierto(false)}
+        >
+          <div
+            className="bg-oxford-blue border border-davy-gray/40 rounded-lg max-w-3xl w-full
+                       max-h-[90vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-6 border-b border-davy-gray/30">
+              <h3 className="text-lg font-semibold text-seasalt">
+                Exportar verificaciones para investigacion externa
+              </h3>
+              <p className="text-xs text-davy-gray mt-2">
+                Copia este texto y pegalo en una conversacion nueva de Claude.ai. Claude.ai va a
+                usar su busqueda web nativa para investigar las verificaciones pendientes y
+                devolverte hallazgos con fuentes. Despues cargas esos hallazgos como fuentes
+                en el ODF y el sistema regenera el borrador con la evidencia incorporada.
+              </p>
+            </div>
+
+            <div className="flex-1 overflow-auto p-6">
+              <textarea
+                readOnly
+                value={buildTextoExportadorPesquisa(
+                  project,
+                  parseBorradorFromRaw(project.data.borrador as Record<string, unknown>) as BorradorData
+                )}
+                className="w-full h-96 bg-oxford-blue/50 border border-davy-gray/30 rounded
+                           p-4 text-seasalt text-xs font-mono resize-none focus:outline-none"
+              />
+            </div>
+
+            <div className="p-6 border-t border-davy-gray/30 flex items-center justify-between">
+              <button
+                onClick={handleCopiarExportador}
+                className="px-4 py-2 bg-amber-brand text-oxford-blue rounded font-semibold
+                           hover:bg-amber-brand/90 transition-colors text-sm"
+              >
+                {exportadorCopiado ? 'Copiado' : 'Copiar al portapapeles'}
+              </button>
+              <button
+                onClick={() => setExportadorAbierto(false)}
+                className="px-4 py-2 text-davy-gray hover:text-seasalt transition-colors text-sm"
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

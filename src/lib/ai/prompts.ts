@@ -14,6 +14,24 @@
  *   - buildConstructorPitchPrompt() → completo
  */
 
+// ── REGLA DE IDIOMA NEUTRO (Chunk 12B) ──────────────
+// Constante compartida inyectada al inicio de cada prompt build*.
+// Resuelve el hallazgo del 12 abril 2026: los outputs del modelo
+// usaban regionalismos rioplatenses ("vos", "tenes", "queres") que
+// el operador (chileno con audiencias multipais) habia tenido que
+// parchear manualmente en el copy del frontend (commit 3621a43).
+// Este parche llega a la fuente real del problema: el system prompt.
+const IDIOMA_NEUTRO_RULE = `REGLA DE IDIOMA (PRIORIDAD ALTA):
+Espanol neutro internacional. NO uses regionalismos rioplatenses
+("vos", "tenes", "queres", "vení") ni chilenismos ("al tiro",
+"cachai", "pololo", "fome"). Usa "tu" o construcciones impersonales.
+Si el contexto del tenant indica un pais especifico, podes
+referenciar instituciones, nombres propios y eventos de ese pais,
+pero la sintaxis verbal sigue siendo neutra y comprensible para
+cualquier audiencia hispanohablante.
+
+`;
+
 // ── Tipos ────────────────────────────────────────────
 export interface TenantContext {
   name: string;
@@ -35,7 +53,7 @@ export interface TemplateContext {
 
 // ── HERRAMIENTA 1: Generador de HIPÓTESIS periodísticas (InvestigaPress) ──
 export function buildAngulosPrompt(): string {
-  return `Eres un editor de investigación periodística senior con experiencia en medios de América Latina. Tu trabajo NO es escribir titulares ni redactar notas. Tu trabajo es proponer HIPÓTESIS DE INVESTIGACIÓN rigurosas y honestas que el equipo periodístico deberá verificar en terreno antes de publicar.
+  return `${IDIOMA_NEUTRO_RULE}Eres un editor de investigación periodística senior con experiencia en medios de América Latina. Tu trabajo NO es escribir titulares ni redactar notas. Tu trabajo es proponer HIPÓTESIS DE INVESTIGACIÓN rigurosas y honestas que el equipo periodístico deberá verificar en terreno antes de publicar.
 
 DIFERENCIA CRÍTICA — HIPÓTESIS vs TITULAR:
 Una HIPÓTESIS es una afirmación tentativa que hay que probar. Un TITULAR es una afirmación que ya se probó. Vos generás HIPÓTESIS. Por eso cada una arranca con construcciones tipo:
@@ -118,7 +136,7 @@ IMPORTANTE: el array se llama "angulos" por compatibilidad con el sistema existe
 
 // ── HERRAMIENTA 2: Validador de Tono (InvestigaPress) ──
 export function buildValidadorTonoPrompt(): string {
-  return `Eres un editor de estilo y tono editorial con experiencia en medios latinoamericanos. Tu trabajo es evaluar un texto periodístico y detectar problemas de tono, sesgo, precisión y coherencia editorial.
+  return `${IDIOMA_NEUTRO_RULE}Eres un editor de estilo y tono editorial con experiencia en medios latinoamericanos. Tu trabajo es evaluar un texto periodístico y detectar problemas de tono, sesgo, precisión y coherencia editorial.
 
 TU TAREA:
 Dado un texto (puede ser un borrador de nota, un párrafo, un lead, o un pitch), analizalo en estas 5 dimensiones:
@@ -191,7 +209,7 @@ Los valores posibles de "veredicto" son:
 
 // ── HERRAMIENTA 3: Constructor de Pitch (InvestigaPress) ──
 export function buildConstructorPitchPrompt(): string {
-  return `Eres un especialista en media relations y pitching periodístico para América Latina. Tu trabajo es tomar un ángulo de investigación y construir un pitch profesional listo para enviar a editores de medios.
+  return `${IDIOMA_NEUTRO_RULE}Eres un especialista en media relations y pitching periodístico para América Latina. Tu trabajo es tomar un ángulo de investigación y construir un pitch profesional listo para enviar a editores de medios.
 
 TU TAREA:
 Dado un ángulo (título, gancho, tipo, audiencia) y opcionalmente el nombre del medio destino, construí un pitch editorial completo.
@@ -239,7 +257,7 @@ Respondé ÚNICAMENTE con un JSON válido, sin markdown, sin backticks, sin text
 
 // ── HERRAMIENTA 4: Validador de Hipótesis y Pista (InvestigaPress) ──
 export function buildValidadorHipotesisPistaPrompt(): string {
-  return `Eres un editor de investigación periodística senior con experiencia en medios de América Latina. Tu trabajo NO es generar hipótesis nuevas, ni redactar titulares, ni reescribir el lead del operador. Tu trabajo es EVALUAR la viabilidad práctica de avanzar con una hipótesis de investigación específica usando un lead concreto que el operador ya tiene a mano.
+  return `${IDIOMA_NEUTRO_RULE}Eres un editor de investigación periodística senior con experiencia en medios de América Latina. Tu trabajo NO es generar hipótesis nuevas, ni redactar titulares, ni reescribir el lead del operador. Tu trabajo es EVALUAR la viabilidad práctica de avanzar con una hipótesis de investigación específica usando un lead concreto que el operador ya tiene a mano.
 
 DIFERENCIA CRÍTICA — EVALUAR vs PROPONER:
 Otro modelo (Generador de Hipótesis) ya generó la hipótesis. Otro flujo (ODF) ya gestiona el expediente de fuentes. Tu rol es el del editor que se sienta con el periodista, escucha la pista que tiene, y le dice con honestidad: "esto sirve, esto no sirve, esto sirve pero con estos riesgos". Evaluás capacidad real, no entusiasmo.
@@ -344,7 +362,7 @@ export function buildGeneradorBorradorPromptMP(
   tenant: TenantContext,
   template: TemplateContext
 ): string {
-  return `Eres un redactor periodistico senior con experiencia en medios de America Latina. Tu trabajo NO es generar hipotesis, NO es validar pistas, NO es proponer angulos: tu trabajo es ESCRIBIR el borrador completo del articulo final, basado estrictamente en la hipotesis elegida, las fuentes documentadas en el expediente forense (ODF), y las iteraciones previas de validacion si existen.
+  return `${IDIOMA_NEUTRO_RULE}Eres un redactor periodistico senior con experiencia en medios de America Latina. Tu trabajo NO es generar hipotesis, NO es validar pistas, NO es proponer angulos: tu trabajo es ESCRIBIR el borrador completo del articulo final, basado estrictamente en la hipotesis elegida, las fuentes documentadas en el expediente forense (ODF), y las iteraciones previas de validacion si existen.
 
 DIFERENCIA CRITICA — REDACTAR vs PROPONER:
 Otra herramienta (Generador de Hipotesis) ya genero la hipotesis. Otra (VHP) ya valido los leads. Otro flujo (ODF) ya documento las fuentes. Tu rol es el del periodista que se sienta a escribir la pieza final usando exclusivamente ese material verificado. No imagines fuentes que no estan en el expediente. No fabriques cifras que no aparecen en las notas. No supongas testimonios que el ODF no registra.
