@@ -419,12 +419,14 @@ const PHASE_CONFIG: Record<string, PhaseConfig> = {
   pesquisa: {
     tabs: [
       { key: 'odf', label: '🗂️ Organizador de Fuentes' },
-      { key: 'pitch', label: '📨 Constructor de Pitch' },
       { key: 'radar', label: '📡 Radar Editorial' },
     ],
   },
   produccion: {
-    tabs: [{ key: 'borrador', label: '✍️ Generador de Borrador' }],
+    tabs: [
+      { key: 'borrador', label: '✍️ Generador de Borrador' },
+      { key: 'pitch', label: '📨 Constructor de Pitch' },
+    ],
   },
   visual: {
     tabs: [],
@@ -1586,14 +1588,71 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
     setPitchMedio(sug.editor.medio);
   }
 
+  // Chunk 12E: refactorizado para consumir data.borrador en vez del angulo libre.
   async function handleConstruirPitch() {
-    if (!project || !pitchAngulo.trim()) return;
+    if (!project) return;
+
+    // Guard de borrador validado
+    const dataObj = (project.data ?? {}) as Record<string, unknown>;
+    const borradorRaw = dataObj.borrador as Record<string, unknown> | undefined;
+    if (!borradorRaw || typeof borradorRaw !== 'object') {
+      setPitchError(
+        'El pitch requiere un borrador validado. Genera y guarda el borrador antes de construir el pitch.'
+      );
+      return;
+    }
+
+    const borradorParsed = parseBorradorFromRaw(borradorRaw);
+    if (!borradorParsed || !borradorParsed.borrador.titulo) {
+      setPitchError(
+        'El borrador guardado no tiene estructura valida. Regenera el borrador antes de construir el pitch.'
+      );
+      return;
+    }
+
     setConstruyendo(true);
     setPitchError(null);
 
-    let userMessage = `ÁNGULO: ${pitchAngulo.trim()}`;
+    // Construir userMessage desde el borrador completo
+    const b = borradorParsed.borrador;
+    const m = borradorParsed.metadata;
+
+    let userMessage = `BORRADOR VALIDADO:\n`;
+    userMessage += `TITULO: ${b.titulo}\n`;
+    if (b.bajada) userMessage += `BAJADA: ${b.bajada}\n`;
+    userMessage += `\nLEAD:\n${b.lead}\n`;
+    if (b.cuerpo.length > 0) {
+      userMessage += `\nCUERPO:\n`;
+      b.cuerpo.forEach((sec) => {
+        if (sec.subtitulo) userMessage += `\n## ${sec.subtitulo}\n`;
+        sec.parrafos.forEach((p) => {
+          userMessage += `${p}\n\n`;
+        });
+      });
+    }
+    if (b.cierre) userMessage += `CIERRE:\n${b.cierre}\n`;
+
+    if (m.fuentes_citadas.length > 0) {
+      userMessage += `\nFUENTES CITADAS EN EL BORRADOR:\n`;
+      m.fuentes_citadas.forEach((f) => {
+        userMessage += `- ${f}\n`;
+      });
+    }
+    if (m.verificaciones_criticas_resueltas.length > 0) {
+      userMessage += `\nVERIFICACIONES CRITICAS RESUELTAS:\n`;
+      m.verificaciones_criticas_resueltas.forEach((v) => {
+        userMessage += `- ${v}\n`;
+      });
+    }
+    if (m.verificaciones_criticas_pendientes.length > 0) {
+      userMessage += `\nVERIFICACIONES CRITICAS PENDIENTES (el pitch debe omitirlas o marcarlas [PENDIENTE]):\n`;
+      m.verificaciones_criticas_pendientes.forEach((v) => {
+        userMessage += `- ${v}\n`;
+      });
+    }
+
     if (pitchMedio.trim()) userMessage += `\nMEDIO DESTINO: ${pitchMedio.trim()}`;
-    if (project.thesis) userMessage += `\nTESIS: ${project.thesis}`;
+    if (project.thesis) userMessage += `\nTESIS DEL PROJECT: ${project.thesis}`;
 
     try {
       const genBody: Record<string, unknown> = {
@@ -1620,7 +1679,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
         texto_completo: result.texto_completo ?? '',
         medio_destino: result.medio_destino ?? (pitchMedio.trim() || 'General'),
         notas_estrategicas: result.notas_estrategicas ?? '',
-        angulo_titulo: pitchAngulo.trim(),
+        angulo_titulo: b.titulo,
         generadoEn: new Date().toISOString(),
       };
 
@@ -3210,30 +3269,41 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
               </section>
             )}
 
-            {/* ── TAB: Constructor de Pitch (fase pesquisa) ── */}
+            {/* ── TAB: Constructor de Pitch (Chunk 12E: fase produccion, consume borrador) ── */}
             {activeTool === 'pitch' && phaseConfig.tabs.some((t) => t.key === 'pitch') && (
               <div>
-                {savedHipotesisElegida && (
-                  <div className="bg-blue-500/10 border border-blue-500/30 rounded p-3 mb-4 text-xs text-blue-400">
-                    💡 Prellenado desde hipótesis elegida. Podés editar el campo libremente.
-                  </div>
-                )}
+                {/* Chunk 12E: guard visual — el pitch ahora requiere un borrador validado */}
+                {(() => {
+                  const dataObj = (project?.data ?? {}) as Record<string, unknown>;
+                  const borrRaw = dataObj.borrador as Record<string, unknown> | undefined;
+                  const hasBorrador = !!borrRaw && typeof borrRaw === 'object' && !!(borrRaw as Record<string, unknown>).titulo;
+                  if (!hasBorrador) {
+                    return (
+                      <div className="bg-red-500/10 border border-red-500/40 rounded p-4 mb-4">
+                        <p className="text-red-400 text-sm font-medium mb-1">
+                          El Constructor de Pitch requiere un borrador validado
+                        </p>
+                        <p className="text-davy-gray text-xs">
+                          Genera el borrador en el tab Generador de Borrador antes de construir
+                          el pitch. El pitch se construye a partir del borrador verificado, no
+                          desde un angulo libre.
+                        </p>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div className="bg-green-500/10 border border-green-500/30 rounded p-3 mb-4">
+                      <p className="text-green-400 text-xs">
+                        Borrador disponible: <span className="font-medium text-seasalt">{String((borrRaw as Record<string, unknown>).titulo ?? '')}</span>
+                      </p>
+                    </div>
+                  );
+                })()}
                 <p className="text-davy-gray text-sm mb-4">
-                  Construí un pitch editorial listo para enviar a editores de medios.
+                  Construye un pitch editorial basado en el borrador validado. El pitch
+                  refleja exclusivamente lo documentado en el borrador y sus fuentes.
                 </p>
                 <div className="space-y-3">
-                  <input
-                    type="text"
-                    value={pitchAngulo}
-                    onChange={(e) => {
-                      setPitchAngulo(e.target.value);
-                      setPitchTouched(true);
-                    }}
-                    placeholder="Título o descripción del ángulo para el pitch…"
-                    className="w-full bg-oxford-blue border border-davy-gray/30 rounded px-4 py-2
-                               text-seasalt placeholder:text-davy-gray/50 focus:outline-none
-                               focus:border-amber-brand/50 text-sm"
-                  />
 
                   {/* Chunk 11B: Tier objetivo + panel de sugerencias */}
                   {project.hasTenant && project.templateFamily ? (
@@ -3380,12 +3450,12 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                   />
                   <button
                     onClick={handleConstruirPitch}
-                    disabled={!pitchAngulo.trim() || construyendo}
+                    disabled={!((project?.data as Record<string, unknown>)?.borrador) || construyendo}
                     className="w-full py-2.5 bg-amber-brand text-oxford-blue rounded font-medium text-sm
                                hover:bg-amber-brand/90 transition-colors
                                disabled:opacity-40 disabled:cursor-not-allowed"
                   >
-                    {construyendo ? 'Construyendo pitch…' : '📨 Construir Pitch'}
+                    {construyendo ? 'Construyendo pitch…' : '📨 Construir Pitch desde Borrador'}
                   </button>
                 </div>
                 {pitchError && <p className="text-red-400 text-sm mt-3">{pitchError}</p>}
