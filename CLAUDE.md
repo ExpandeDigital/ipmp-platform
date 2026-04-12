@@ -395,6 +395,42 @@ El refactor del Constructor de Pitch en 12E dejo codigo muerto en `ProjectDetail
 - La regla de idioma neutro (`IDIOMA_NEUTRO_RULE`) del 12B se inyecto en 5 funciones build* IP + 1 funcion build*MP (buildGeneradorBorradorPromptMP). Las 4 funciones build*MP restantes heredan la regla automaticamente del base via `const basePrompt = build*()`. El stub IP de buildGeneradorBorradorPrompt se salto porque es un mensaje de error, no un prompt real.
 - El incidente del CLAUDE.md desfasado entre sesiones (descubierto en 12A) motivo la creacion de la seccion "Workflow operativo entre sesiones" con las dos disciplinas de "una sesion un chunk" y "snapshot del estado del repo al inicio de cada chat". Ambas disciplinas se validaron empiricamente en la sesion del Chunk 12.
 
+## Hallazgos de validacion — Chunk 15 (12 abril 2026)
+
+### a) Vercel Blob operativo en plan Hobby
+
+El store ipmp-platform-blob fue creado en la sesion del Chunk 15
+en region IAD1. El plan Hobby incluye 500MB storage y 1GB transfer
+mensual, suficiente para el volumen proyectado de 6-8 projects por mes.
+El store fue creado con access privado (default de Vercel). El endpoint
+de upload requirio ajuste: access 'public' falla en stores privados,
+access 'private' genera URLs con token temporal que son igualmente
+accesibles via link directo. Hallazgo operativo: al crear un Blob store
+nuevo en Vercel, verificar el tipo de acceso (publico vs privado) antes
+de codificar el endpoint, para evitar el fix post-deploy del 15B.
+
+### b) Upload validado en campo con PDF real
+
+El sub-chunk 15B implemento la UI de upload en cada card de fuente del
+ODF. Validado en campo con el project del candombe: archivo
+Paper_Origenes_del_Candombe_V2.pdf subido correctamente al Vercel Blob,
+link visible en la card de la fuente, boton de eliminacion operativo.
+Los tres tipos de archivo probados (Python script, PDF, Word) fallaron
+inicialmente por el error de access publico en store privado (ver
+hallazgo a). Una vez aplicado el fix de access privado, el upload
+funciono en el primer intento.
+
+### c) Contrato de deletion best-effort
+
+El sub-chunk 15C implemento el contrato de deletion: cuando el operador
+elimina una fuente del ODF con archivo adjunto, el blob se elimina
+primero via DELETE a /api/fuentes/delete-blob. El try/catch es
+intencional y documentado: si el delete del blob falla, la fuente
+se elimina igual para no bloquear al operador. Los blobs huerfanos
+son recuperables manualmente desde el dashboard de Vercel. Esta
+decision sigue el principio de no bloquear el flujo editorial por
+fallos de infraestructura de storage.
+
 ## Hallazgos de validacion — Chunk 14 (12 abril 2026)
 
 ### a) Reordenamiento del pipeline validado en produccion
@@ -598,9 +634,23 @@ es directamente usable en herramientas externas de generacion de imagen.
 El modelo actua como director de arte periodistico: no inventa elementos
 visuales ausentes del borrador.
 
-### Chunk 15+ — Futuros (sin orden definitivo)
+### Chunk 15 — Upload de documentos fuente en el ODF [COMPLETADO 12 abril 2026]
 
-- Upload real de documentos fuente en el ODF: infraestructura de storage (Vercel Blob o S3), signed URLs, MIME validation, max file size, deletion contract. El chunk mas grande pendiente.
+- **15A** `8097519` feat(chunk15a): infraestructura Vercel Blob endpoints upload y delete fuentes.
+- **15B** `058d4e1` feat(chunk15b): UI upload archivos por fuente ODF integrado con Vercel Blob.
+- **15B fix** `7865763` fix(chunk15b): cambiar access blob a private compatible con store configuracion.
+- **15C** `fa01e09` feat(chunk15c): contrato deletion blob al eliminar fuente ODF best-effort.
+- **15G** `[HASH]` docs(chunk15g): cierre documental Chunk 15.
+
+Decision arquitectonica registrada: el upload de archivos usa Vercel Blob
+con access privado. Las URLs generadas tienen token temporal incorporado
+y son directamente accesibles via link sin infraestructura adicional de
+signed URLs. El contrato de deletion es best-effort: el blob se elimina
+antes que la fuente, pero si falla, la fuente se elimina igual. Los blobs
+huerfanos son recuperables desde el dashboard de Vercel.
+
+### Chunk 16+ — Futuros (sin orden definitivo)
+
 - Asset library per tenant con versionado y metadata obligatoria (declaracion IA, alt text, origen).
 - Bitacora de Pesquisa Externa con trazabilidad de hallazgos por motor: workflow externo documentado en 14C. Feature de plataforma diferida: registrar cada exportacion con que motor se uso, que hallazgos se promovieron al ODF y cuales se descartaron. Implementar cuando la plataforma se abra a operadores externos.
 - Cleanup canal de errores del Validador de Borrador: posible consolidacion de borradorError y genBorradorError en un solo namespace cuando la arquitectura de errores evolucione.
