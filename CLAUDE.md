@@ -529,7 +529,7 @@ Hallazgos de validacion: ver seccion "Hallazgos de validacion — Chunk 12 (12 a
 
 - **13A** `f626ed9` refactor(chunk13a): cleanup codigo muerto post-12E estados pitch y color huerfano.
 - **13B** `9d74c15` feat(chunk13b): exportador basico ZIP fase exportado.
-- **13C** `[HASH]` docs(chunk13c): cierre documental Chunk 13.
+- **13C** `79beaa1` docs(chunk13c): cierre documental Chunk 13.
 
 ### Chunk 14+ — Futuros (sin orden definitivo)
 
