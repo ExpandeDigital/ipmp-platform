@@ -126,6 +126,11 @@ interface Fuente {
   // Chunk 15B: archivo adjunto vía Vercel Blob
   archivo_url?: string;
   archivo_nombre?: string;
+  // Chunk 16B: historial V1 al reemplazar archivo
+  archivo_url_v1?: string;
+  archivo_nombre_v1?: string;
+  archivo_size_v1?: number;
+  archivo_replaced_at?: string;
   // Trazabilidad: cuando una fuente fue auto-promovida desde el VHP (Chunk 7B)
   origen?: 'manual' | 'vhp';
   origen_validacion_id?: string;
@@ -524,6 +529,10 @@ function parseFuenteFromRaw(f: Record<string, unknown>): Fuente {
     url: typeof f.url === 'string' && f.url ? f.url : undefined,
     archivo_url: typeof f.archivo_url === 'string' ? f.archivo_url : undefined,
     archivo_nombre: typeof f.archivo_nombre === 'string' ? f.archivo_nombre : undefined,
+    archivo_url_v1: typeof f.archivo_url_v1 === 'string' ? f.archivo_url_v1 : undefined,
+    archivo_nombre_v1: typeof f.archivo_nombre_v1 === 'string' ? f.archivo_nombre_v1 : undefined,
+    archivo_size_v1: typeof f.archivo_size_v1 === 'number' ? f.archivo_size_v1 : undefined,
+    archivo_replaced_at: typeof f.archivo_replaced_at === 'string' ? f.archivo_replaced_at : undefined,
     fecha_registro:
       typeof f.fecha_registro === 'string' && f.fecha_registro
         ? f.fecha_registro
@@ -2110,11 +2119,21 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
             parseFuenteFromRaw(f as Record<string, unknown>)
           )
         : [];
-      const actualizadas = fuentesActuales.map((f) =>
-        f.id === fuenteId
-          ? { ...f, archivo_url: json.url as string, archivo_nombre: file.name }
-          : f
-      );
+      const actualizadas = fuentesActuales.map((f) => {
+        if (f.id !== fuenteId) return f;
+        const updated: Fuente = {
+          ...f,
+          archivo_url: json.url as string,
+          archivo_nombre: file.name,
+        };
+        // Chunk 16B: si ya tenia archivo, respaldar V1
+        if (f.archivo_url) {
+          updated.archivo_url_v1 = f.archivo_url;
+          updated.archivo_nombre_v1 = f.archivo_nombre;
+          updated.archivo_replaced_at = new Date().toISOString();
+        }
+        return updated;
+      });
       await persistirFuentes(actualizadas);
     } catch (err) {
       setOdfUploadError(err instanceof Error ? err.message : 'Error al subir archivo');
@@ -3442,39 +3461,57 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                           {f.notas && (
                             <p className="text-davy-gray/80 text-xs mt-2 italic">{f.notas}</p>
                           )}
-                          {/* Chunk 15B: archivo adjunto */}
+                          {/* Chunk 15B + 16B: archivo adjunto con soporte V2 */}
                           <div className="mt-2">
+                            <input
+                              type="file"
+                              id={`file-input-${f.id}`}
+                              accept=".pdf,.jpg,.jpeg,.png,.webp,.txt,.doc,.docx"
+                              className="hidden"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) handleUploadArchivo(f.id, file);
+                                e.target.value = '';
+                              }}
+                            />
                             {f.archivo_url ? (
-                              <div className="flex items-center gap-2">
-                                <a
-                                  href={f.archivo_url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-amber-brand text-xs hover:underline break-all"
-                                >
-                                  📄 {f.archivo_nombre || 'Archivo adjunto'}
-                                </a>
-                                <button
-                                  onClick={() => handleDeleteArchivo(f.id, f.archivo_url!)}
-                                  className="text-davy-gray hover:text-red-400 text-xs px-1"
-                                  title="Eliminar archivo"
-                                >
-                                  ✕
-                                </button>
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-2">
+                                  <a
+                                    href={f.archivo_url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-amber-brand text-xs hover:underline break-all"
+                                  >
+                                    📄 {f.archivo_nombre || 'Archivo adjunto'}
+                                  </a>
+                                  {f.archivo_replaced_at && (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-brand/10 border border-amber-brand/30 text-amber-brand">
+                                      V2 activa - V1 archivada
+                                    </span>
+                                  )}
+                                  <button
+                                    onClick={() => handleDeleteArchivo(f.id, f.archivo_url!)}
+                                    className="text-davy-gray hover:text-red-400 text-xs px-1"
+                                    title="Eliminar archivo"
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                                {odfUploadingId === f.id ? (
+                                  <span className="text-davy-gray text-xs animate-pulse">Subiendo...</span>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => document.getElementById(`file-input-${f.id}`)?.click()}
+                                    className="text-xs text-davy-gray hover:text-amber-brand transition-colors"
+                                  >
+                                    📎 Reemplazar archivo (V2)
+                                  </button>
+                                )}
                               </div>
                             ) : (
                               <>
-                                <input
-                                  type="file"
-                                  id={`file-input-${f.id}`}
-                                  accept=".pdf,.jpg,.jpeg,.png,.webp,.txt,.doc,.docx"
-                                  className="hidden"
-                                  onChange={(e) => {
-                                    const file = e.target.files?.[0];
-                                    if (file) handleUploadArchivo(f.id, file);
-                                    e.target.value = '';
-                                  }}
-                                />
                                 {odfUploadingId === f.id ? (
                                   <span className="text-davy-gray text-xs animate-pulse">Subiendo...</span>
                                 ) : (
