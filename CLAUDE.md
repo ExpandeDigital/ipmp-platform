@@ -303,6 +303,44 @@ The empirical consequence is that the smoke test registry `75dfa942-1ac1-41b8-85
 - The smoke test of Chunk 10A exercised all four CRUD primitives (list, create, partial update, soft-delete) and the field-level semantics (jsonb round-trip, nullable persistence, updatedAt auto-advance, marcarVerificado flag). No regressions on the pre-existing 8 tables.
 - The UI of Chunk 10B validated visually: the nav link, the header, the barra superior with visible/hidden counter, the form collapse/expand, the tenant checkboxes populated dynamically from `tenants` table, the optimistic update after create, and the shape of the tarjeta cards in the active and inactive states. The five remaining handlers (inline Edit save, Verificar hoy, Desactivar, Reactivar, and the re-sort on tier change) were not exercised explicitly in the validation session — they will get their first functional exercise on the next real media-relations work session. The code is straightforward and follows the patterns exercised by other handlers, so this is acceptable deferred validation, not blocker.
 
+## Hallazgos de validacion — Chunk 11 (12 abril 2026)
+
+Chunk 11 fue ejecutado en una sesion intermedia entre el cierre del Chunk 10 y la sesion del 12 abril, sin sub-chunk documental al momento del cierre. La documentacion retroactiva de los hallazgos se hace en el sub-chunk 12A. Solo un hallazgo importante emerge del Chunk 11 visto en retrospectiva, y es lo que motiva el alcance del Chunk 12 entero.
+
+### a) La integracion agenda-pitch resuelve un problema operativo correctamente, pero queda subordinada a un bug arquitectonico mayor del Constructor de Pitch del Chunk 6
+
+El Chunk 11 implementa correctamente lo que su alcance original prometia: un panel de sugerencias de editores que filtra la agenda del Chunk 10 por tenant, tier y tipo de pieza, con relajacion progresiva en tres buckets de calidad de match. El operador puede elegir un editor sugerido del panel y el `pitchMedio` se autopopula al instante.
+
+Sin embargo, al usarlo con casos reales en la sesion del 12 abril, el operador observa que los pitches generados contienen afirmaciones especificas sobre fuentes, datos historicos, citas academicas y referencias institucionales que no aparecen en ninguna parte del expediente del project. El modelo las fabrica y las marca con `[POR VERIFICAR]` para taparlas. La causa raiz no es el Chunk 11 ni su panel de sugerencias: es que el Constructor de Pitch del Chunk 6 nunca fue diseñado para consumir el expediente. El handler `handleConstruirPitch` solo le pasa al modelo el angulo libre que el operador escribio + opcionalmente la tesis del project + el medio destino. No lee `data.hipotesis_elegida`, no lee `data.fuentes`, no lee `data.borrador`. El prompt del Constructor de Pitch en `prompts.ts` instruye al modelo a usar `[POR VERIFICAR]` para cualquier dato que no este confirmado, pero no se le da nada con que cumplirlo.
+
+El Chunk 11 entonces resuelve un problema real (saber a quien pitchearle) pero queda subordinado a un bug arquitectonico mas profundo: el Pitch genera contenido especulativo porque opera sin contexto del expediente. La integracion agenda-pitch del Chunk 11 es necesaria pero insuficiente. El Chunk 12 lo resuelve invirtiendo la dependencia entre Borrador y Pitch: el Pitch pasa a fase produccion despues del Validador del Borrador, su prompt se refactoriza para consumir el borrador validado como base canonica, y la metadata del editor elegido del Chunk 11B se preserva intacta como dato adicional opcional.
+
+Decision arquitectonica que esto produce: el orden Borrador -> Pitch (no Pitch -> Borrador) es coherente con la decision registrada en el Chunk 8 de que el Borrador NO debe leer del pitch viejo bajo ninguna circunstancia. Cada artefacto tiene un consumidor rio abajo, no rio arriba.
+
+### Notas sobre la falta de sub-chunk documental al momento del cierre del Chunk 11
+
+El Chunk 11 cerro a nivel codigo con dos commits limpios (`7596b71` y `51ce578`) pero la sesion no llego a producir un sub-chunk `docs(chunk11)`. Esto es deuda documental que se resuelve en el sub-chunk 12A retroactivamente. Lo registramos como hallazgo operacional para futuros chunks: el sub-chunk documental no es opcional, debe ser parte del cierre de cada chunk antes de cerrar la sesion. Cuando una sesion se queda sin tiempo o el operador asume que la documentacion se va a hacer "despues", ese despues no llega y la siguiente sesion abre con un CLAUDE.md desfasado. Esto produce friccion durante el reconocimiento del estado real del repo y puede llevar a planificar sobre supuestos incorrectos.
+
+## Workflow operativo entre sesiones
+
+Aprendizaje meta del cierre tardio del Chunk 11 documentado retroactivamente en el sub-chunk 12A. Dos disciplinas que se adoptan a partir del Chunk 12 para prevenir drift entre sesiones:
+
+### Disciplina 1 — Una sesion, un chunk
+
+Cada chunk arranca en un chat nuevo de Claude.ai con `CLAUDE.md` actualizado del repo adjunto al inicio. Cuando el chunk cierra (commit documental incluido), el chat se archiva. Un chat = un chunk. Esto evita la mezcla de contextos entre chunks distintos y garantiza que cada nueva instancia de Claude arranca con el estado real del repo, no con una version intermedia de la memoria de conversaciones anteriores.
+
+### Disciplina 2 — Snapshot del estado del repo al inicio de cada chat
+
+Antes de empezar a planificar un chunk nuevo, el operador corre tres comandos en Git Bash desde el directorio del repo (`cd /c/ipmp-platform`) y los pega como mensaje temprano del chat despues del CLAUDE.md adjunto:
+
+```bash
+git log --oneline -10
+git status
+git rev-parse HEAD
+```
+
+El primer comando da el contexto historico reciente. El segundo confirma working tree limpio. El tercero confirma el HEAD exacto sobre el cual la sesion va a planificar. Si hubiera codigo no documentado (commits en `main` que no figuran en CLAUDE.md), aparece inmediatamente en el snapshot y se puede investigar antes de planificar. Si el operador olvida correr este snapshot, la nueva instancia de Claude debe pedirlo explicitamente antes de proponer cualquier chunk nuevo.
+
 ## Roadmap
 
 Confirmed chunk ordering after Chunk 6 validation (10 abril 2026). Each chunk should preserve the Chunk 6 retrocompat contract: projects created under older chunks must keep rendering without writes to any of the new `data.*` keys.
@@ -357,23 +395,34 @@ Decision arquitectonica registrada: los jsonb arrays en `editores_agenda` son `.
 
 Hallazgos de validacion: ver seccion "Hallazgos de validacion — Chunk 10 (11 abril 2026)" mas arriba.
 
-### Chunk 11 — Integracion agenda-pitch (next priority)
+### Chunk 11 — Integracion agenda-pitch [COMPLETADO entre 11 y 12 abril 2026]
 
-Conectar la agenda de editores del Chunk 10 con el Constructor de Pitch existente. El objetivo es que cuando el operador esta armando un pitch en fase `produccion` para un project con `tenant` + `template` + `tier objetivo` definidos, el formulario del Constructor autopopule o sugiera el campo "medio destino" / "editor destino" desde `editores_agenda` filtrado por:
+Cerrado en una sesion intermedia entre el cierre del Chunk 10 (`182023f`) y la sesion del 12 abril donde se descubrieron los hallazgos del Chunk 12. Dos sub-chunks secuenciales mergeados directamente a `main`, sin sub-chunk documental hasta el cierre retroactivo del Chunk 12A:
 
-- `activo = true` (no proponer contactos soft-deleted).
-- `tier` del editor matcheando el tier objetivo del pitch (idealmente <= al tier objetivo para permitir escalar hacia arriba).
-- `tenants_relevantes` conteniendo el slug del tenant del project.
-- Opcionalmente, `tipo_pieza_recomendado` conteniendo un identificador derivado de `template.family` (ej. family `prensa` matchea `reportaje`, `nota`, `entrevista`; family `opinion` matchea `columna`).
+- `7596b71` feat(chunk11a): endpoint sugerencias de editores con relajacion progresiva. Nuevo endpoint `GET /api/editores/sugerencias?tenantSlug={slug}&tier={n}&templateFamily={family}`. Filtro duro en SQL via Drizzle: `activo = true AND tier <= tierObjetivo`. Sobre el subset filtrado, clasificacion in-memory en tres buckets (relajacion progresiva): `exacto` (tenants_relevantes incluye tenantSlug AND tipo_pieza_recomendado matchea templateFamily), `sin_tipo` (solo tenant), `sin_tenant` (solo tipo). Los que no cumplen ni tenant ni tipo quedan fuera del resultado. Match case-insensitive bidireccional con `.includes()` (sin normalizacion de acentos: las entradas canonicas las define el operador). Mapeo `FAMILY_TO_TIPOS`: prensa -> reportaje/nota/entrevista/cronica/investigacion, opinion -> columna/opinion/editorial/tribuna, institucional -> comunicado/institucional/declaracion, academico -> paper/academico/analisis/ensayo. Response shape: `{ success, sugerencias: [{editor, match}], meta: { tenantSlug, tier, templateFamily, totalExacto, totalSinTipo, totalSinTenant } }`.
+
+- `51ce578` feat(chunk11b): panel de sugerencias de editores en Constructor de Pitch. UI completa del consumidor del endpoint 11A. Estado React local en `ProjectDetailClient.tsx`: `tierObjetivo` (default 1), `sugerencias[]`, `sugerenciasMeta`, `sugerenciasLoading`, `sugerenciasError`, `editorElegidoId`, `editorElegidoNombre`, `editorElegidoMedio`. Hidratacion inicial: `useEffect` que lee `data.pitch.tierObjetivo` cuando `project?.id` cambia (deps array intencional con eslint-disable para que un refetch del mismo project no resetee el tier que el operador acaba de cambiar manualmente). Fetch automatico con debounce de 300ms cuando cambian `tenantSlug`, `templateFamily` o `tierObjetivo`. Toggle handler `handleElegirEditor`: click en una card elige el editor (setea los tres campos snapshot + `pitchMedio`); click en la misma card lo deselecciona. Persistencia: cuatro campos nuevos en `data.pitch` (`tierObjetivo`, `editorId`, `editorNombreSnapshot`, `editorMedioSnapshot`) que viajan en el `pitchPayload` cuando se construye el pitch. JSX condicional al `project.hasTenant && project.templateFamily`: dropdown de tier con cuatro opciones (Tier 1 Nacional/Internacional, Tier 2 Regional, Tier 3 Sectorial, Tier 4 Nicho/Comunitario), contador de resultados, listado agrupado por nivel de match (Match exacto / Tipo no confirmado / Tenant no listado).
+
+Decision arquitectonica registrada: la relajacion progresiva por buckets fue elegida sobre scoring numerico por dos razones — (a) explicabilidad: un editor en el bucket "sin_tipo" significa exactamente "es de tu tenant pero no es su tipo de pieza habitual", lo cual el operador interpreta al instante; (b) simplicidad: el frontend recibe un array ya ordenado y solo tiene que renderizarlo, sin ordenamiento adicional. El match case-insensitive bidireccional con `.includes()` tolera variantes de cómo el operador escribió los tipos sin imponer un controlled vocabulary rigido, alineado con la filosofia de Chunk 10 de no automatizar el juicio del operador.
+
+Hallazgos de validacion: ver seccion "Hallazgos de validacion — Chunk 11 (12 abril 2026)" mas arriba.
+
+### Chunk 12 — Pesquisa Aplicada y Realineacion del Pipeline Editorial (next priority)
+
+Resuelve el bug arquitectonico fundamental descubierto en la sesion del 12 abril: el Constructor de Pitch del Chunk 6 nunca fue diseñado para consumir el expediente del project (hipotesis elegida, fuentes del ODF, borrador validado), lo que produce pitches con datos alucinados marcados como `[POR VERIFICAR]`. El bug solo se hizo visible al tener casos reales corriendo end-to-end. La solucion del Chunk 12 invierte la dependencia entre Borrador y Pitch, mueve el Constructor de Pitch de fase pesquisa a fase produccion despues del Validador del Borrador, e introduce un loop de pesquisa externa con Claude.ai para que el operador pueda traer evidencia real desde fuera de la plataforma y cargarla como fuentes en el ODF.
 
 Alcance propuesto (a refinar al arrancar el chunk):
-- Nuevo endpoint `GET /api/editores/sugerencias` que recibe `tenantSlug`, `tier`, `templateFamily` y devuelve el subset filtrado. Alternativa: filtrar en el client desde la lista completa si el volumen lo permite (<100 entries). Decision dependiente de como resulte la UX.
-- Modificacion del tab de Constructor de Pitch en `ProjectDetailClient.tsx` para agregar un panel "Editores sugeridos" antes o dentro del form actual, con chips clickeables que autopopulan el campo destino.
-- Posible refinamiento del prompt del Constructor para inyectar el nombre del editor elegido como contexto adicional cuando esta disponible.
+- Sub-chunk 12A: cierre documental retroactivo del Chunk 11 (esta edicion).
+- Sub-chunk 12B: exportador de pesquisa externa en el tab del Borrador, con prompt pre-formateado para Claude.ai que incluye las verificaciones criticas pendientes y las advertencias del borrador. Bonus: regla de español neutro inyectada como constante compartida en todos los prompts del repo, eliminando el rioplatense que se filtra en los outputs del modelo.
+- Sub-chunk 12C: auto-invalidacion del borrador cuando se cargan fuentes nuevas al ODF (flag `data.borrador.desactualizado = true` automatico en el PATCH), banner amarillo en el frontend, soft gate confirmable en el avance `produccion -> visual`.
+- Sub-chunk 12D: refinamiento del prompt del Generador de Borrador para detectar dinamicamente la presencia de fuentes en el expediente y operar en modo "evidencia disponible" (citar fuentes explicitamente en vez de marcar `[VERIFICAR]` por todos lados).
+- Sub-chunk 12E: refactor del Constructor de Pitch — mover el tab a fase produccion despues del Borrador, refactorizar el handler para que consuma `data.borrador` validado en vez del angulo libre, refactorizar el prompt del Pitch en `prompts.ts` para que reciba el borrador como base canonica. La integracion agenda-pitch del Chunk 11B se preserva intacta (panel de sugerencias, hidratacion del tierObjetivo, persistencia de metadata del editor elegido).
+- Sub-chunk 12F: bug de UX — ocultar las hipotesis no elegidas del listado en fase validacion despues de que el operador eligio una.
+- Sub-chunk 12G: cierre documental del Chunk 12.
 
-Dependencias: Chunk 10 completo (listo). No requiere cambios en otras areas del pipeline.
+Dependencias: Chunk 11 completo (listo, documentado retroactivamente en 12A). No requiere cambios de schema. No requiere upgrade de Vercel. Toca solo aplicacion.
 
-### Chunk 12+ — Futuros (sin orden definitivo)
+### Chunk 13+ — Futuros (sin orden definitivo)
 
 - Exportador basico para fase `exportado` (primer destino probable: `empaquetado_interno` como zip). Chunk dedicado.
 - Upload real de documentos fuente en el ODF (a2 del Chunk 7): infraestructura de storage (Vercel Blob o S3), signed URLs, MIME validation, max file size, deletion contract. Chunk dedicado, probablemente el mas grande pendiente.
