@@ -2060,6 +2060,20 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
     )
       return;
 
+    // Chunk 15C: eliminar blob adjunto antes de eliminar la fuente (best-effort)
+    if (f.archivo_url) {
+      try {
+        await fetch('/api/fuentes/delete-blob', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: f.archivo_url }),
+        });
+      } catch {
+        // Best-effort: si falla, la fuente se elimina igual.
+        // El blob huérfano es recuperable desde el dashboard de Vercel.
+      }
+    }
+
     setOdfGuardando(true);
     setOdfError(null);
     try {
