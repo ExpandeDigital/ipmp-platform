@@ -321,7 +321,6 @@ const TIPO_LABELS: Record<string, string> = {
 
 const VERIFICACION_COLORS: Record<string, string> = {
   hipotesis: 'bg-amber-brand/20 text-amber-brand border-amber-brand/40',
-  dato_referencial: 'bg-green-500/20 text-green-400 border-green-500/40',
   requiere_pesquisa: 'bg-red-500/20 text-red-400 border-red-500/40',
 };
 
@@ -767,9 +766,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
   const [eligiendo, setEligiendo] = useState<number | null>(null);
 
   // Constructor de Pitch
-  const [pitchAngulo, setPitchAngulo] = useState('');
   const [pitchMedio, setPitchMedio] = useState('');
-  const [pitchTouched, setPitchTouched] = useState(false);
   const [construyendo, setConstruyendo] = useState(false);
   const [pitchError, setPitchError] = useState<string | null>(null);
 
@@ -864,18 +861,8 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project?.status]);
 
-  // ── Prefill del Constructor de Pitch desde hipótesis elegida ──
-  useEffect(() => {
-    if (!project || pitchTouched) return;
-    const raw = project.data?.hipotesis_elegida as Record<string, unknown> | undefined;
-    if (raw && typeof raw === 'object' && raw.titulo) {
-      const titulo = String(raw.titulo ?? '');
-      const gancho = String(raw.gancho ?? '');
-      const prefill = gancho ? `${titulo} — ${gancho}` : titulo;
-      setPitchAngulo(prefill);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project?.data?.hipotesis_elegida]);
+  // Chunk 13A: eliminado useEffect de prefill pitchAngulo desde hipotesis
+  // (codigo muerto post-12E: el Constructor de Pitch ahora consume data.borrador).
 
   // Chunk 9B (B1): prefill del textarea de notas del operador del Generador de Borrador
   // desde data.borrador.notasOperador al montar/cambiar el project, si el textarea local
@@ -1158,7 +1145,6 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
         const pj = await res.json();
         throw new Error(pj.error || 'Error limpiando elección');
       }
-      setPitchTouched(false); // permitir re-prefill si elige otra
       await fetchProject();
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Error desconocido');
