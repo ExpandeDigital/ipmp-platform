@@ -395,6 +395,28 @@ El refactor del Constructor de Pitch en 12E dejo codigo muerto en `ProjectDetail
 - La regla de idioma neutro (`IDIOMA_NEUTRO_RULE`) del 12B se inyecto en 5 funciones build* IP + 1 funcion build*MP (buildGeneradorBorradorPromptMP). Las 4 funciones build*MP restantes heredan la regla automaticamente del base via `const basePrompt = build*()`. El stub IP de buildGeneradorBorradorPrompt se salto porque es un mensaje de error, no un prompt real.
 - El incidente del CLAUDE.md desfasado entre sesiones (descubierto en 12A) motivo la creacion de la seccion "Workflow operativo entre sesiones" con las dos disciplinas de "una sesion un chunk" y "snapshot del estado del repo al inicio de cada chat". Ambas disciplinas se validaron empiricamente en la sesion del Chunk 12.
 
+## Hallazgos de validacion — Chunk 13 (12 abril 2026)
+
+### a) Cleanup codigo muerto post-12E ejecutado sin fricciones
+
+Los cinco elementos huerfanos identificados tras el refactor del 12E fueron eliminados limpiamente en el sub-chunk 13A: los estados pitchAngulo y pitchTouched, el useEffect de prefill desde hipotesis, la referencia a setPitchTouched en handleCambiarEleccion, y la entrada dato_referencial en VERIFICACION_COLORS. El grep post-cleanup confirmo cero referencias funcionales restantes. Costo: 16 deleciones, 2 inserciones. Build limpio.
+
+### b) Exportador ZIP: diseno validado en campo con project real
+
+El sub-chunk 13B implemento el exportador basico de fase exportado usando jszip. La validacion de campo con el project del candombe (publicId MetricPress) confirmo que la estructura del ZIP es legible e interpretable por un operador sin contexto tecnico previo. Los cinco archivos exportados correctamente:
+
+- proyecto.json: expediente completo del project con todos los campos de data.
+- borrador.md: borrador en markdown con estructura de secciones, fiel al estado persistido incluyendo marcadores de verificacion pendientes.
+- pitch.md: pitch editorial completo con texto_completo, medio_destino y notas_estrategicas.
+- fuentes-odf.json: array completo de fuentes del ODF con confianza, rol y metadata.
+- hipotesis.json: objeto completo de hipotesis con los cuatro angulos generados, tipo, audiencia y verificaciones criticas.
+
+El exportador es fiel al estado real del project: no embellece ni normaliza datos pendientes. Cuando el operador actualice una fuente en el ODF, el proximo ZIP reflejara automaticamente la fuente actualizada sin cambios en el endpoint.
+
+### c) Hallazgo de producto: el ZIP como unidad de portabilidad editorial
+
+La validacion de campo revelo que el ZIP exportado funciona como carpeta maestra autosuficiente del project: un segundo operador sin acceso a la plataforma puede reconstruir el estado editorial completo leyendo los cinco archivos. Esto es coherente con el Principio 4 de filantropia digital (portabilidad de datos del usuario) y confirma que el diseno del endpoint es correcto.
+
 ## Workflow operativo entre sesiones
 
 Aprendizaje meta del cierre tardio del Chunk 11 documentado retroactivamente en el sub-chunk 12A. Dos disciplinas que se adoptan a partir del Chunk 12 para prevenir drift entre sesiones:
@@ -503,11 +525,16 @@ Decision arquitectonica registrada: la inversion de dependencia Borrador→Pitch
 
 Hallazgos de validacion: ver seccion "Hallazgos de validacion — Chunk 12 (12 abril 2026)" mas arriba.
 
-### Chunk 13+ — Futuros (sin orden definitivo)
+### Chunk 13 — Cleanup tecnico y exportador basico [COMPLETADO 12 abril 2026]
 
-- Exportador basico para fase `exportado` (primer destino probable: `empaquetado_interno` como zip). Chunk dedicado.
-- Upload real de documentos fuente en el ODF (a2 del Chunk 7): infraestructura de storage (Vercel Blob o S3), signed URLs, MIME validation, max file size, deletion contract. Chunk dedicado, probablemente el mas grande pendiente.
+- **13A** `f626ed9` refactor(chunk13a): cleanup codigo muerto post-12E estados pitch y color huerfano.
+- **13B** `9d74c15` feat(chunk13b): exportador basico ZIP fase exportado.
+- **13C** `[HASH]` docs(chunk13c): cierre documental Chunk 13.
+
+### Chunk 14+ — Futuros (sin orden definitivo)
+
+- Upload real de documentos fuente en el ODF: infraestructura de storage (Vercel Blob o S3), signed URLs, MIME validation, max file size, deletion contract. El chunk mas grande pendiente.
 - Asset library per tenant con versionado y metadata obligatoria (declaracion IA, alt text, origen).
-- Cleanup del map `VERIFICACION_COLORS` en `ProjectDetailClient.tsx`: eliminar la entrada `dato_referencial` que quedo huerfana despues del Chunk 9A D1 (se preservo para retrocompat de hipotesis legacy, pero se puede remover cuando se confirme que ya no quedan hipotesis antiguas con ese valor en produccion).
-- Cleanup del canal de error del Validador de Borrador: posiblemente consolidar `borradorError` y `genBorradorError` en un solo namespace cuando la arquitectura de errores evolucione. Por ahora conviven sin problemas.
-- Cleanup codigo muerto post-12E: eliminar `pitchAngulo`, `pitchTouched` y `useEffect` de prefill desde `hipotesis_elegida` en `ProjectDetailClient.tsx`. Los tres quedaron declarados pero sin uso real despues del refactor del Constructor de Pitch a fase produccion. Consolidar con el cleanup de `VERIFICACION_COLORS` (`dato_referencial` huerfano desde Chunk 9A D1).
+- Bitacora de Pesquisa Externa con trazabilidad de hallazgos por motor: registrar cada exportacion con que motor se uso, que hallazgos se promovieron al ODF y cuales se descartaron. Implementar cuando la plataforma se abra a operadores externos.
+- Cleanup canal de errores del Validador de Borrador: posible consolidacion de borradorError y genBorradorError en un solo namespace cuando la arquitectura de errores evolucione.
+- Actualizacion de fuentes en proyecto exportado: permitir reemplazar una fuente del ODF por una version actualizada (V2) sin perder el historial de la V1. Identificado como necesidad operativa en la validacion de campo del Chunk 13B.
