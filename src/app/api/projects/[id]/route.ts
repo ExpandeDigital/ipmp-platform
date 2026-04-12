@@ -26,9 +26,9 @@ const PIPELINE_ORDER = [
   'validacion',
   'pesquisa',
   'produccion',
-  'visual',
   'revision',
   'aprobado',
+  'visual',
   'exportado',
 ] as const;
 

@@ -977,15 +977,15 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
         if (!ok) return;
       }
     }
-    // Chunk 12C: soft gate de avance produccion -> visual con borrador desactualizado.
+    // Chunk 12C: soft gate de avance produccion -> revision con borrador desactualizado.
     if (action === 'advance' && project.status === 'produccion') {
       const dataObj = (project.data ?? {}) as Record<string, unknown>;
       const borrador = dataObj.borrador as Record<string, unknown> | null;
       if (borrador?.desactualizado === true) {
         const ok = confirm(
           'El borrador no refleja las fuentes mas recientes del ODF. ' +
-          'Si avanzas a Visual ahora, la pieza visual se va a construir ' +
-          'sobre un borrador desactualizado.\n\n' +
+          'Si avanzas a Revision ahora, vas a validar un borrador ' +
+          'desactualizado.\n\n' +
           '¿Avanzar de todos modos?'
         );
         if (!ok) return;
