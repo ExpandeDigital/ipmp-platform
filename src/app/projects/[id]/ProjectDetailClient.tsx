@@ -277,7 +277,7 @@ interface TemplateOption {
   reviewLevel: string;
 }
 
-type ActiveTool = 'hipotesis' | 'vhp' | 'odf' | 'pitch' | 'radar' | 'validador' | 'borrador' | 'exportador';
+type ActiveTool = 'hipotesis' | 'vhp' | 'odf' | 'pitch' | 'radar' | 'validador' | 'borrador' | 'exportador' | 'prompt_visual';
 
 interface PhaseConfig {
   tabs: { key: ActiveTool; label: string }[];
@@ -428,8 +428,7 @@ const PHASE_CONFIG: Record<string, PhaseConfig> = {
     ],
   },
   visual: {
-    tabs: [],
-    placeholder: 'Generador de Visuales — fase futura',
+    tabs: [{ key: 'prompt_visual', label: '🎨 Generador de Prompt Visual' }],
   },
   revision: {
     tabs: [{ key: 'validador', label: '✅ Validador de Tono del Borrador' }],
@@ -832,6 +831,10 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
   // Chunk 13B: exportador ZIP de fase exportado
   const [exportandoZip, setExportandoZip] = useState(false);
   const [exportZipError, setExportZipError] = useState<string | null>(null);
+
+  // Chunk 14B: generador de prompt visual
+  const [generandoPromptVisual, setGenerandoPromptVisual] = useState(false);
+  const [genPromptVisualError, setGenPromptVisualError] = useState<string | null>(null);
 
   // ── Cargar project ──
   const fetchProject = useCallback(async () => {
@@ -1693,6 +1696,109 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
       setPitchError(err instanceof Error ? err.message : 'Error desconocido');
     } finally {
       setConstruyendo(false);
+    }
+  }
+
+  // ── Generador de Prompt Visual — Chunk 14B ──
+  async function handleGenerarPromptVisual() {
+    if (!project) return;
+
+    const dataObj = (project.data ?? {}) as Record<string, unknown>;
+    const borradorRaw = dataObj.borrador as Record<string, unknown> | undefined;
+    if (!borradorRaw || typeof borradorRaw !== 'object') {
+      setGenPromptVisualError(
+        'El proyecto no tiene borrador aprobado. Genera el borrador en la fase Produccion antes de continuar.'
+      );
+      return;
+    }
+
+    const borradorParsed = parseBorradorFromRaw(borradorRaw);
+    if (!borradorParsed || !borradorParsed.borrador.titulo) {
+      setGenPromptVisualError(
+        'El borrador guardado no tiene estructura valida. Regenera el borrador antes de continuar.'
+      );
+      return;
+    }
+
+    if (!project.tenantSlug || !project.templateSlug) {
+      setGenPromptVisualError(
+        'El Generador de Prompt Visual requiere tenant y template asignados.'
+      );
+      return;
+    }
+
+    setGenerandoPromptVisual(true);
+    setGenPromptVisualError(null);
+
+    const b = borradorParsed.borrador;
+    const m = borradorParsed.metadata;
+
+    let userMessage = `BORRADOR APROBADO:\n`;
+    userMessage += `TITULO: ${b.titulo}\n`;
+    if (b.bajada) userMessage += `BAJADA: ${b.bajada}\n`;
+    userMessage += `\nLEAD:\n${b.lead}\n`;
+    if (b.cuerpo.length > 0) {
+      userMessage += `\nCUERPO:\n`;
+      b.cuerpo.forEach((sec) => {
+        if (sec.subtitulo) userMessage += `\n## ${sec.subtitulo}\n`;
+        sec.parrafos.forEach((p) => {
+          userMessage += `${p}\n\n`;
+        });
+      });
+    }
+    if (b.cierre) userMessage += `CIERRE:\n${b.cierre}\n`;
+
+    // Pitch como contexto adicional (medio destino informa el estilo visual)
+    const pitchRaw = dataObj.pitch as Record<string, unknown> | undefined;
+    if (pitchRaw && typeof pitchRaw === 'object') {
+      const medioDestino = String(pitchRaw.medio_destino ?? '');
+      if (medioDestino) userMessage += `\nMEDIO DESTINO: ${medioDestino}\n`;
+    }
+
+    if (m.fuentes_citadas.length > 0) {
+      userMessage += `\nFUENTES CITADAS:\n`;
+      m.fuentes_citadas.forEach((f) => {
+        userMessage += `- ${f}\n`;
+      });
+    }
+
+    if (project.thesis) userMessage += `\nTESIS: ${project.thesis}\n`;
+
+    try {
+      const res = await fetch('/api/ai/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tool: 'generador_prompt_visual',
+          userMessage,
+          projectId: project.id,
+          tenantSlug: project.tenantSlug,
+          templateSlug: project.templateSlug,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Error generando prompt visual');
+
+      const result = json.result ?? {};
+
+      await fetch(`/api/projects/${project.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          data: {
+            prompt_visual: {
+              ...result,
+              generadoEn: new Date().toISOString(),
+            },
+          },
+        }),
+      });
+
+      await fetchProject();
+    } catch (err) {
+      setGenPromptVisualError(err instanceof Error ? err.message : 'Error desconocido');
+    } finally {
+      setGenerandoPromptVisual(false);
     }
   }
 
@@ -4094,6 +4200,151 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                         </button>
                       </div>
                     </div>
+                  );
+                })()}
+              </div>
+            )}
+
+            {/* ── TAB: Generador de Prompt Visual (Chunk 14B: fase visual) ── */}
+            {activeTool === 'prompt_visual' && phaseConfig.tabs.some((t) => t.key === 'prompt_visual') && (
+              <div className="space-y-4">
+                {/* Contexto del expediente */}
+                {(() => {
+                  const dataObj = (project.data ?? {}) as Record<string, unknown>;
+                  const borradorRaw = dataObj.borrador as Record<string, unknown> | undefined;
+                  const pitchRaw = dataObj.pitch as Record<string, unknown> | undefined;
+                  const promptVisualRaw = dataObj.prompt_visual as Record<string, unknown> | undefined;
+                  const hasBorrador = borradorRaw && typeof borradorRaw === 'object';
+                  const borradorTitulo = hasBorrador ? String((borradorRaw as Record<string, unknown>).titulo ?? '') : '';
+                  const medioDestino = pitchRaw ? String(pitchRaw.medio_destino ?? '') : '';
+
+                  return (
+                    <>
+                      {/* Panel de contexto */}
+                      <div className="bg-oxford-blue/50 rounded-lg p-4 border border-davy-gray/20">
+                        <h3 className="text-seasalt text-sm font-semibold mb-2">Contexto del expediente</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                          <div>
+                            <span className="text-davy-gray">Borrador:</span>{' '}
+                            {borradorTitulo ? (
+                              <span className="text-seasalt">{borradorTitulo}</span>
+                            ) : (
+                              <span className="text-red-400">Sin borrador</span>
+                            )}
+                          </div>
+                          <div>
+                            <span className="text-davy-gray">Medio destino:</span>{' '}
+                            <span className="text-seasalt">{medioDestino || 'No definido'}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Guard: sin borrador */}
+                      {!hasBorrador && (
+                        <div className="bg-red-500/10 border border-red-500/40 rounded p-4">
+                          <p className="text-red-400 text-sm">
+                            El proyecto no tiene borrador aprobado. Genera el borrador en la fase Produccion antes de continuar.
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Error */}
+                      {genPromptVisualError && (
+                        <div className="bg-red-500/10 border border-red-500/40 rounded p-3">
+                          <p className="text-red-400 text-sm">{genPromptVisualError}</p>
+                        </div>
+                      )}
+
+                      {/* Boton generar */}
+                      <button
+                        type="button"
+                        onClick={handleGenerarPromptVisual}
+                        disabled={generandoPromptVisual || !hasBorrador}
+                        className="px-6 py-3 bg-amber-brand text-oxford-blue font-semibold rounded
+                                   hover:bg-amber-brand/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {generandoPromptVisual
+                          ? 'Generando prompt visual...'
+                          : promptVisualRaw
+                            ? '🔄 Regenerar prompt visual'
+                            : '🎨 Generar prompt visual'}
+                      </button>
+
+                      {/* Resultado */}
+                      {promptVisualRaw && typeof promptVisualRaw === 'object' && (
+                        <div className="space-y-4">
+                          <div className="bg-space-cadet rounded-lg border border-davy-gray/30 p-5 space-y-4">
+                            <h3 className="text-amber-brand font-semibold text-lg">Prompt visual generado</h3>
+
+                            {[
+                              { key: 'descripcion_imagen', label: 'Descripcion de la imagen' },
+                              { key: 'estilo', label: 'Estilo' },
+                              { key: 'paleta_mood', label: 'Paleta / Mood' },
+                              { key: 'composicion', label: 'Composicion' },
+                              { key: 'formato_proporciones', label: 'Formato y proporciones' },
+                              { key: 'instruccion_uso', label: 'Instruccion de uso' },
+                            ].map(({ key, label }) => {
+                              const val = String(promptVisualRaw[key] ?? '');
+                              if (!val) return null;
+                              return (
+                                <div key={key}>
+                                  <p className="text-davy-gray text-xs font-semibold uppercase tracking-wider mb-1">
+                                    {label}
+                                  </p>
+                                  <p className="text-seasalt text-sm whitespace-pre-wrap">{val}</p>
+                                </div>
+                              );
+                            })}
+
+                            {typeof promptVisualRaw.generadoEn === 'string' && (
+                              <p className="text-davy-gray text-xs mt-2">
+                                Generado: {new Date(promptVisualRaw.generadoEn).toLocaleString('es-CL')}
+                              </p>
+                            )}
+                          </div>
+
+                          {/* Boton copiar */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const lines = [
+                                promptVisualRaw.descripcion_imagen ? `Descripcion: ${promptVisualRaw.descripcion_imagen}` : '',
+                                promptVisualRaw.estilo ? `Estilo: ${promptVisualRaw.estilo}` : '',
+                                promptVisualRaw.paleta_mood ? `Paleta/Mood: ${promptVisualRaw.paleta_mood}` : '',
+                                promptVisualRaw.composicion ? `Composicion: ${promptVisualRaw.composicion}` : '',
+                                promptVisualRaw.formato_proporciones ? `Formato: ${promptVisualRaw.formato_proporciones}` : '',
+                                promptVisualRaw.instruccion_uso ? `Uso: ${promptVisualRaw.instruccion_uso}` : '',
+                              ].filter(Boolean).join('\n\n');
+                              navigator.clipboard.writeText(lines).then(
+                                () => alert('Prompt visual copiado al portapapeles'),
+                                () => {
+                                  const ta = document.createElement('textarea');
+                                  ta.value = lines;
+                                  ta.style.position = 'fixed';
+                                  ta.style.left = '-9999px';
+                                  document.body.appendChild(ta);
+                                  ta.focus();
+                                  ta.select();
+                                  alert('No se pudo copiar automaticamente. Selecciona el texto y usa Ctrl+C.');
+                                  document.body.removeChild(ta);
+                                }
+                              );
+                            }}
+                            className="px-4 py-2 bg-oxford-blue border border-davy-gray/40 text-seasalt text-sm rounded
+                                       hover:border-amber-brand/60 transition-colors"
+                          >
+                            📋 Copiar prompt visual
+                          </button>
+
+                          {/* Nota informativa */}
+                          <p className="text-davy-gray/60 text-xs">
+                            Este prompt esta diseñado para usarse en herramientas de generacion de imagenes
+                            (Midjourney, DALL-E, etc.). Pega el texto copiado en la herramienta de tu preferencia.
+                            Toda imagen generada con IA debe declararse como tal en los creditos.
+                          </p>
+                        </div>
+                      )}
+                    </>
                   );
                 })()}
               </div>

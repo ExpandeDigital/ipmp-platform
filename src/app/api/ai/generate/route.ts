@@ -56,6 +56,7 @@ const VALID_TOOLS: ToolName[] = [
   'constructor_pitch',
   'validador_hipotesis_pista',
   'generador_borrador',
+  'generador_prompt_visual',
 ];
 
 // ── Handler ──────────────────────────────────────────
@@ -87,7 +88,7 @@ export async function POST(request: NextRequest) {
 
     // 2.5. Hard-block: herramientas MetricPress-only
     // generador_borrador requiere tenant + template porque solo opera en fase produccion (post-traspaso).
-    const MP_ONLY_TOOLS: ToolName[] = ['generador_borrador'];
+    const MP_ONLY_TOOLS: ToolName[] = ['generador_borrador', 'generador_prompt_visual'];
     if (MP_ONLY_TOOLS.includes(toolName) && (!tenantSlug || !templateSlug)) {
       return NextResponse.json(
         {

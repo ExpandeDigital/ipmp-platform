@@ -630,6 +630,65 @@ REGLA CRÍTICA — RIGOR PRIMERO:
 La alineación de marca NUNCA puede inflar el score. Un lead débil con buena alineación sigue siendo un lead débil. La marca es un filtro adicional de riesgo, no un atajo de viabilidad. Las reglas de coherencia score/veredicto y las reglas de acceso (especulativo→max 60, probable→max 80, confirmado→0-100) se mantienen intactas.`;
 }
 
+// ── HERRAMIENTA 6: Generador de Prompt Visual (InvestigaPress — stub) ──
+// MetricPress-only por diseno, igual que generador_borrador.
+export function buildGeneradorPromptVisualPrompt(): string {
+  return `ERROR: La herramienta generador_prompt_visual requiere contexto de marca (tenant + template). No puede invocarse en modo InvestigaPress. Si estas leyendo este texto, hay un bug en el endpoint /api/ai/generate.`;
+}
+
+// ── Generador de Prompt Visual MetricPress (con contexto de marca) ──
+export function buildGeneradorPromptVisualPromptMP(
+  tenant: TenantContext,
+  template: TemplateContext
+): string {
+  return `${IDIOMA_NEUTRO_RULE}Eres un director de arte periodistico con experiencia en medios latinoamericanos. Tu trabajo es recibir el borrador de un articulo periodistico ya aprobado editorialmente y generar un prompt visual estructurado que un operador pueda usar en herramientas de generacion de imagenes (Midjourney, DALL-E, Ideogram, etc.).
+
+NO generas imagenes. Generas la INSTRUCCION PRECISA para que la herramienta visual produzca la imagen correcta.
+
+ENTRADA QUE VAS A RECIBIR:
+El operador te entrega el borrador aprobado con estos campos:
+- Titulo del articulo
+- Bajada (subtitulo)
+- Lead (primer parrafo)
+- Cuerpo completo del articulo
+- Tono editorial del borrador
+- Medio destino (donde se va a publicar)
+
+TU TAREA:
+Analiza los elementos visuales clave del borrador — personajes, escenarios, objetos, acciones, emociones — y genera un prompt visual que capture la esencia editorial de la pieza.
+
+REGLA ANTI-FABRICACION (LA MAS IMPORTANTE):
+No inventes elementos visuales que no esten presentes en el borrador. Si el borrador menciona una protesta, describe esa protesta. Si menciona un edificio gubernamental, describe ese edificio. Si el borrador esta incompleto o no tiene suficientes elementos visuales concretos, declaralo en descripcion_imagen con el marcador [VERIFICAR] y basa la descripcion en lo que si esta disponible.
+
+CONTEXTO DE MARCA:
+MARCA: ${tenant.name}${tenant.brandVariant ? ` (variante: ${tenant.brandVariant})` : ''}
+PERFIL: ${tenant.systemPromptBase}
+TIPO DE PIEZA: ${template.name} (familia: ${template.family})
+
+La paleta_mood debe ser coherente con la identidad visual de la marca. Si la marca tiene una estetica institucional sobria, la paleta debe reflejar eso. Si la marca es mas expresiva o emocional, la paleta puede serlo tambien. Pero siempre subordinada al tono editorial del borrador — el borrador manda.
+
+REGLA DE DECLARACION IA:
+Toda imagen generada a partir de este prompt debe ser declarada como generada por IA en los creditos del articulo. No debe representar personas reales identificables.
+
+FORMATO DE RESPUESTA:
+Responde UNICAMENTE con un JSON valido, sin markdown, sin backticks, sin texto antes ni despues.
+{
+  "descripcion_imagen": "Descripcion concisa de la imagen ideal en una oracion, derivada de los elementos visuales clave del cuerpo del borrador.",
+  "estilo": "fotoperiodismo | ilustracion_editorial | infografia | fotografia_documental | ilustracion_conceptual",
+  "paleta_mood": "2-3 adjetivos de color/temperatura derivados del tono editorial (ej: frios, desaturados, neutros)",
+  "composicion": "Indicacion de encuadre y elementos visuales principales (ej: plano medio, sujeto centrado, fondo difuminado urbano)",
+  "formato_proporciones": "Proporcion recomendada segun medio destino (ej: 16:9 para digital, 1:1 para redes, 4:5 vertical para Instagram, A4 apaisado para impreso)",
+  "instruccion_uso": "Una oracion de instruccion para pegar en la herramienta visual (ej: Pega este prompt en Midjourney con el parametro --ar 16:9)"
+}
+
+REGLAS SOBRE LOS VALORES:
+- "estilo": elige el mas apropiado segun el genero y tono del borrador. Noticias facticas → fotoperiodismo o fotografia_documental. Opinion o analisis → ilustracion_editorial o ilustracion_conceptual. Datos o estadisticas → infografia.
+- "paleta_mood": derivala del tono_editorial del borrador, no la inventes arbitrariamente.
+- "composicion": basala en los elementos concretos mencionados en el texto.
+- "formato_proporciones": derivalo del medio_destino si esta disponible.
+- "instruccion_uso": incluye el parametro de proporcion si corresponde.`;
+}
+
 // ══════════════════════════════════════════════════════
 // REGISTRY DE PROMPTS
 // ══════════════════════════════════════════════════════
@@ -639,7 +698,8 @@ export type ToolName =
   | 'validador_tono'
   | 'constructor_pitch'
   | 'validador_hipotesis_pista'
-  | 'generador_borrador';
+  | 'generador_borrador'
+  | 'generador_prompt_visual';
 
 /**
  * Builders InvestigaPress — NO requieren tenant ni template
@@ -650,6 +710,7 @@ export const IP_PROMPT_BUILDERS: Record<ToolName, () => string> = {
   constructor_pitch: buildConstructorPitchPrompt,
   validador_hipotesis_pista: buildValidadorHipotesisPistaPrompt,
   generador_borrador: buildGeneradorBorradorPrompt,
+  generador_prompt_visual: buildGeneradorPromptVisualPrompt,
 };
 
 /**
@@ -664,6 +725,7 @@ export const MP_PROMPT_BUILDERS: Record<
   constructor_pitch: buildConstructorPitchPromptMP,
   validador_hipotesis_pista: buildValidadorHipotesisPistaPromptMP,
   generador_borrador: buildGeneradorBorradorPromptMP,
+  generador_prompt_visual: buildGeneradorPromptVisualPromptMP,
 };
 
 /**
