@@ -588,7 +588,7 @@ Hallazgos de validacion: ver seccion "Hallazgos de validacion — Chunk 12 (12 a
 - **14A** `a0b9595` feat(chunk14a): mover fase visual al final del pipeline post-aprobado.
 - **14B** `3b4b6e2` feat(chunk14b): tab Visual generador de prompt estructurado fase visual.
 - **14C** Sin codigo — decision documentada en hallazgos 14G (Bitacora como workflow externo).
-- **14G** `[HASH]` docs(chunk14g): cierre documental Chunk 14.
+- **14G** `c50b4d7` docs(chunk14g): cierre documental Chunk 14.
 
 Decision arquitectonica registrada: el tab Visual opera como generador
 de prompt estructurado, no como generador de imagen. La posicion
