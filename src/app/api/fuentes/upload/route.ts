@@ -65,7 +65,7 @@ export async function POST(request: NextRequest) {
     const safeId = String(fuenteId || 'sin-id');
     const pathname = `fuentes/${safeId}/${safeName}`;
 
-    const blob = await put(pathname, file, { access: 'public' });
+    const blob = await put(pathname, file, { access: 'private' });
 
     return NextResponse.json({
       success: true,
