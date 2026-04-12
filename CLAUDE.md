@@ -2,6 +2,44 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+---
+
+## Por que existe IPMP
+
+Hay dos formas opuestas de usar IA generativa para producir contenido periodistico, y IPMP se construye deliberadamente bajo la segunda.
+
+**El atajo de cinco minutos.** El operador escribe un prompt maestro diciendole al modelo "actua como periodista, investiga sobre X, escribe en genero Y, empaqueta en formato Z, y de paso dame un prompt para generar una imagen ilustrativa". El modelo devuelve algo que se ve completo. El operador copia, pega, publica. Tiempo total: cinco minutos. El proceso entero ocurre en una sola interaccion, sin verificacion intermedia, sin separacion entre hipotesis y afirmacion, sin trazabilidad de fuentes. Esto es lo que hoy domina el mercado. La promesa comercial es velocidad y volumen. El resultado funciona estadisticamente la mayoria de las veces porque los modelos son buenos generando prosa coherente, pero falla catastroficamente en los casos donde la verdad importa mas que la coherencia. Cada uno de esos fallos individualmente parece menor; acumulados a lo largo de meses construyen una capa de polusion informacional que erosiona la confianza del publico en todo el oficio periodistico.
+
+**El proceso disciplinado de IPMP.** El operador empieza con una hipotesis explicita que reconoce como hipotesis y no como afirmacion. La hipotesis se valida o refuta con pesquisa real, donde cada afirmacion queda atada a una fuente concreta documentada en un expediente forense. El borrador se construye sobre la base del expediente, no sobre la imaginacion del modelo, y honestamente reporta que falta verificar cuando el expediente esta incompleto. La iteracion entre borrador y nuevas fuentes ocurre tantas veces como sea necesario hasta que el material este sostenido. Cuando finalmente se publica, cada afirmacion de la nota es trazable a una fuente del expediente y el operador humano firmo cada decision editorial intermedia.
+
+IPMP no compite con los generadores rapidos de contenido del mercado. IPMP compite contra **la perdida de credibilidad acumulada del oficio periodistico** producida por el uso descuidado de IA generativa. El valor del producto no es la velocidad de produccion, es la integridad del contenido producido y la trazabilidad del proceso editorial.
+
+Esta distincion es la columna vertebral del proyecto entero y debe gobernar cualquier decision tecnica futura: features que vayan en contra del proceso disciplinado se rechazan aunque sean elegantes; features que refuercen el proceso disciplinado se priorizan aunque sean caras.
+
+— Cristian Jofre Donoso, 12 de abril de 2026
+
+---
+
+## Filosofia del producto: filantropia digital
+
+IPMP se desarrolla bajo una filosofia explicita llamada filantropia digital, en oposicion al modelo extractivo dominante en software hoy. Cinco principios la componen, y cada uno se traduce en decisiones tecnicas concretas que el arquitecto debe respetar al disenar features, y que el ejecutor debe respetar al implementar.
+
+**Principio 1 — Reciprocidad real, no simbolica.** Antes de pedirle algo al usuario (datos, tiempo, dinero, atencion), la plataforma le entrega algo concreto que el puede usar incluso si decide irse. El usuario tiene que poder responder honestamente a la pregunta "esta plataforma me dio algo util hoy?" en su primera sesion, sin condicionales.
+
+**Principio 2 — Honestidad sobre los limites del producto.** La plataforma le dice al usuario para que sirve y para que no sirve. No oculta limitaciones bajo lenguaje aspiracional. La rigurosidad anti-fabricacion de los prompts del Chunk 8 es la traduccion tecnica directa de este principio.
+
+**Principio 3 — Respeto activo del tiempo y la atencion del usuario.** Cero notificaciones que no resuelvan algo que el usuario ya pidio. Cero gamificacion artificial. El producto compite por el uso porque es util cuando se usa, no porque haya construido un loop psicologico de retorno.
+
+**Principio 4 — Trazabilidad y portabilidad de los datos del usuario.** Lo que el usuario carga, le pertenece. El exportador de pesquisa externa del Chunk 12B es un ejemplo: la plataforma asume el costo de "control del flujo" para devolverle al usuario libertad de elegir el mejor motor para cada caso.
+
+**Principio 5 — Distribucion del valor mas alla del cliente directo.** Una parte del valor que la plataforma genera fluye hacia personas que no son clientes pagadores. El destinatario ultimo de IPMP no es solo el cliente que paga sino los colegas periodistas y emprendedores sin empleo o con recursos limitados a quienes el operador quiere ayudar a montar sus propias agencias.
+
+Cuando hay conflicto entre lo que es tecnicamente optimo y lo que respeta los principios, los principios ganan.
+
+— Cristian Jofre Donoso, 12 de abril de 2026
+
+---
+
 ## Repository purpose
 
 **IP+MP Platform** — internal pipeline for Expande Digital Consultores SpA and Sociedad de Inversiones Dreamoms SpA. It sequences *Research → Production → Packaging → Export* of journalistic/communication assets (reports, columns, legislative briefs, white papers, etc.) with AI assistance. All user-facing copy is Spanish (Chile/Uruguay).
@@ -321,6 +359,42 @@ Decision arquitectonica que esto produce: el orden Borrador -> Pitch (no Pitch -
 
 El Chunk 11 cerro a nivel codigo con dos commits limpios (`7596b71` y `51ce578`) pero la sesion no llego a producir un sub-chunk `docs(chunk11)`. Esto es deuda documental que se resuelve en el sub-chunk 12A retroactivamente. Lo registramos como hallazgo operacional para futuros chunks: el sub-chunk documental no es opcional, debe ser parte del cierre de cada chunk antes de cerrar la sesion. Cuando una sesion se queda sin tiempo o el operador asume que la documentacion se va a hacer "despues", ese despues no llega y la siguiente sesion abre con un CLAUDE.md desfasado. Esto produce friccion durante el reconocimiento del estado real del repo y puede llevar a planificar sobre supuestos incorrectos.
 
+## Hallazgos de validacion — Chunk 12 (12 abril 2026)
+
+Chunk 12 (Pesquisa Aplicada y Realineacion del Pipeline Editorial) es el chunk mas grande del proyecto hasta la fecha: 7 sub-chunks (12A-12G) ejecutados en una sola sesion larga. El chunk resuelve el bug arquitectonico fundamental del Constructor de Pitch e introduce el loop de pesquisa externa que cierra el ciclo investigativo del pipeline. Seis hallazgos emergieron durante la ejecucion.
+
+### a) Bug arquitectonico del Constructor de Pitch del Chunk 6 — resuelto en 12E
+
+El Constructor de Pitch original (Chunk 6) nunca fue disenado para consumir el expediente del project. El handler `handleConstruirPitch` solo pasaba al modelo el angulo libre que el operador escribia + opcionalmente la tesis + el medio destino. No leia `data.hipotesis_elegida`, no leia `data.fuentes`, no leia `data.borrador`. El prompt instruia al modelo a usar `[POR VERIFICAR]` para datos sin confirmar, pero no le daba evidencia con que reemplazar esos placeholders. Resultado: pitches con afirmaciones especificas fabricadas por el modelo, cubiertas bajo el paraguas cosmético de `[POR VERIFICAR]`.
+
+La resolucion en 12E invierte la dependencia: el Constructor de Pitch ahora vive en fase `produccion` (despues del Generador de Borrador, no antes), su handler consume `data.borrador` como base canonica (titulo, bajada, lead, cuerpo, cierre, fuentes citadas, verificaciones resueltas y pendientes), y su prompt prohibe agregar datos que no esten en el borrador. La inversion Borrador→Pitch es coherente con la decision del Chunk 8 de que el Borrador NO debe leer del Pitch: cada artefacto tiene un consumidor rio abajo, no rio arriba.
+
+### b) Loop de evidencia del borrador — introducido en 12C
+
+El Chunk 12C introduce el mecanismo de auto-invalidacion del borrador: cuando se cargan fuentes nuevas al ODF via PATCH, el backend detecta automaticamente que `fuentes.length` aumento y setea `data.borrador.desactualizado = true` en el mismo PATCH atomico. El frontend muestra un banner amarillo con el contador ("generado con N fuentes, ahora hay M") y el boton de generar cambia a "Regenerar con evidencia actualizada". Un soft gate confirmable bloquea el avance `produccion -> visual` con borrador desactualizado. Este mecanismo cierra el loop de pesquisa: el operador exporta las verificaciones pendientes via el exportador del 12B, investiga con Claude.ai, carga los hallazgos como fuentes en el ODF, el borrador se invalida automaticamente, y al regenerar el prompt del 12D opera en modo "evidencia disponible" citando las fuentes en vez de marcar todo con `[VERIFICAR]`.
+
+### c) Modo de operacion diagnostico vs evidencia disponible — introducido en 12D
+
+El prompt del Generador de Borrador ahora detecta automaticamente si el ODF tiene fuentes verificadas/contactadas o no, y opera en dos modos distintos. En modo diagnostico (ODF vacio o sin fuentes sustantivas), el borrador es corto, cauteloso y lleno de marcas `[VERIFICAR]` — su valor es operativo, no editorial. En modo evidencia disponible (ODF con al menos una fuente verificada o contactada), el borrador cita fuentes explicitamente en lenguaje afirmativo y solo marca `[VERIFICAR PENDIENTE]` lo que ninguna fuente respalda. La regla anti-fabricacion es absoluta en ambos modos; lo que cambia es la proporcion entre afirmaciones respaldadas y marcas de verificacion. El modo elegido se declara explicitamente en `notas_editoriales` del JSON de salida.
+
+### d) Clausula de detencion validada operacionalmente
+
+La clausula de detencion por ajuste de alcance, introducida formalmente en el Chunk 12, fue activada dos veces durante la sesion y en ambos casos funciono correctamente: Claude Code paro antes de ejecutar, reporto la discrepancia, y espero confirmacion explicita. El primer caso fue cuando el commit de CLAUDE.md se intento desde el worktree en vez del directorio principal. El segundo caso fue cuando se detecto que el codigo de 12E no habia sido committed antes de intentar commitear las docs de 12G. En ambos casos, la detencion previno un commit roto o incompleto. La clausula se adopta como practica permanente del proyecto.
+
+### e) Principio operativo "asiste, no automatiza"
+
+La decision de disenar el exportador de pesquisa externa del 12B como un modal que copia un prompt pre-formateado (en vez de llamar directamente a Claude.ai via API) cristaliza un principio que estaba implicito desde el Chunk 8: la plataforma asiste al operador en cada paso pero no automatiza la cadena completa. El operador decide cuando investigar, que fuentes cargar, y cuando regenerar el borrador. Cada decision editorial es humana y trazable. Este principio es la traduccion tecnica del "proceso disciplinado" descrito en la seccion "Por que existe IPMP" y debe gobernar cualquier feature futura que toque el ciclo investigativo.
+
+### f) Deuda tecnica: codigo muerto post-12E
+
+El refactor del Constructor de Pitch en 12E dejo codigo muerto en `ProjectDetailClient.tsx`: los estados `pitchAngulo`, `pitchTouched`, y el `useEffect` de prefill desde `hipotesis_elegida` ya no se usan desde la UI ni desde el handler (que ahora consume `data.borrador`). Los estados siguen declarados y el useEffect sigue disparandose al cargar un project, pero su efecto es inofensivo (setea un state que nadie lee). Este codigo muerto se limpia en el Chunk 13+ junto con el cleanup del map `VERIFICACION_COLORS` (dato_referencial huerfano desde Chunk 9A D1). No es urgente pero es deuda tecnica documentada.
+
+### Notas sobre la ejecucion del Chunk 12
+
+- Los 7 sub-chunks se ejecutaron en una sola sesion larga de Claude Code sin rework. El orden fue 12A (cierre retroactivo Chunk 11), 12B (exportador + idioma neutro), 12C (auto-invalidacion borrador), 12D (modo evidencia en prompt), 12E (refactor pitch a produccion), 12F (disclosure hipotesis descartadas), 12G (este cierre documental).
+- La regla de idioma neutro (`IDIOMA_NEUTRO_RULE`) del 12B se inyecto en 5 funciones build* IP + 1 funcion build*MP (buildGeneradorBorradorPromptMP). Las 4 funciones build*MP restantes heredan la regla automaticamente del base via `const basePrompt = build*()`. El stub IP de buildGeneradorBorradorPrompt se salto porque es un mensaje de error, no un prompt real.
+- El incidente del CLAUDE.md desfasado entre sesiones (descubierto en 12A) motivo la creacion de la seccion "Workflow operativo entre sesiones" con las dos disciplinas de "una sesion un chunk" y "snapshot del estado del repo al inicio de cada chat". Ambas disciplinas se validaron empiricamente en la sesion del Chunk 12.
+
 ## Workflow operativo entre sesiones
 
 Aprendizaje meta del cierre tardio del Chunk 11 documentado retroactivamente en el sub-chunk 12A. Dos disciplinas que se adoptan a partir del Chunk 12 para prevenir drift entre sesiones:
@@ -407,20 +481,27 @@ Decision arquitectonica registrada: la relajacion progresiva por buckets fue ele
 
 Hallazgos de validacion: ver seccion "Hallazgos de validacion — Chunk 11 (12 abril 2026)" mas arriba.
 
-### Chunk 12 — Pesquisa Aplicada y Realineacion del Pipeline Editorial (next priority)
+### Chunk 12 — Pesquisa Aplicada y Realineacion del Pipeline Editorial [COMPLETADO 12 abril 2026]
 
-Resuelve el bug arquitectonico fundamental descubierto en la sesion del 12 abril: el Constructor de Pitch del Chunk 6 nunca fue diseñado para consumir el expediente del project (hipotesis elegida, fuentes del ODF, borrador validado), lo que produce pitches con datos alucinados marcados como `[POR VERIFICAR]`. El bug solo se hizo visible al tener casos reales corriendo end-to-end. La solucion del Chunk 12 invierte la dependencia entre Borrador y Pitch, mueve el Constructor de Pitch de fase pesquisa a fase produccion despues del Validador del Borrador, e introduce un loop de pesquisa externa con Claude.ai para que el operador pueda traer evidencia real desde fuera de la plataforma y cargarla como fuentes en el ODF.
+Cerrado en una sola sesion de trabajo dividida en siete sub-chunks secuenciales. El chunk mas grande del proyecto: resuelve el bug arquitectonico del Constructor de Pitch, introduce el loop de pesquisa externa, y establece la filosofia del producto.
 
-Alcance propuesto (a refinar al arrancar el chunk):
-- Sub-chunk 12A: cierre documental retroactivo del Chunk 11 (esta edicion).
-- Sub-chunk 12B: exportador de pesquisa externa en el tab del Borrador, con prompt pre-formateado para Claude.ai que incluye las verificaciones criticas pendientes y las advertencias del borrador. Bonus: regla de español neutro inyectada como constante compartida en todos los prompts del repo, eliminando el rioplatense que se filtra en los outputs del modelo.
-- Sub-chunk 12C: auto-invalidacion del borrador cuando se cargan fuentes nuevas al ODF (flag `data.borrador.desactualizado = true` automatico en el PATCH), banner amarillo en el frontend, soft gate confirmable en el avance `produccion -> visual`.
-- Sub-chunk 12D: refinamiento del prompt del Generador de Borrador para detectar dinamicamente la presencia de fuentes en el expediente y operar en modo "evidencia disponible" (citar fuentes explicitamente en vez de marcar `[VERIFICAR]` por todos lados).
-- Sub-chunk 12E: refactor del Constructor de Pitch — mover el tab a fase produccion despues del Borrador, refactorizar el handler para que consuma `data.borrador` validado en vez del angulo libre, refactorizar el prompt del Pitch en `prompts.ts` para que reciba el borrador como base canonica. La integracion agenda-pitch del Chunk 11B se preserva intacta (panel de sugerencias, hidratacion del tierObjetivo, persistencia de metadata del editor elegido).
-- Sub-chunk 12F: bug de UX — ocultar las hipotesis no elegidas del listado en fase validacion despues de que el operador eligio una.
-- Sub-chunk 12G: cierre documental del Chunk 12.
+- `3b2702c` docs(chunk12a/chunk11): cierre retroactivo del Chunk 11. Documenta los hallazgos del Chunk 11 (bug del Pitch descubierto en retrospectiva), marca Chunk 11 como COMPLETADO, introduce la seccion "Workflow operativo entre sesiones" con las dos disciplinas (una sesion un chunk + snapshot del repo al inicio).
 
-Dependencias: Chunk 11 completo (listo, documentado retroactivamente en 12A). No requiere cambios de schema. No requiere upgrade de Vercel. Toca solo aplicacion.
+- `6e8474a` feat(chunk12b): exportador de pesquisa externa + bonus idioma neutro en prompts. Modal en el tab del Borrador con prompt pre-formateado para Claude.ai (6 bloques: encabezado, datos del project, verificaciones criticas pendientes, advertencias, instrucciones, idioma+geografia). Constante `IDIOMA_NEUTRO_RULE` inyectada en los 5 prompts build* IP + buildGeneradorBorradorPromptMP. Las 4 funciones build*MP restantes heredan via `const basePrompt = build*()`.
+
+- `5ddcba3` feat(chunk12c): auto-invalidacion del borrador y soft gate de avance. Backend: deteccion automatica de aumento de fuentes en el PATCH + flag `data.borrador.desactualizado = true`. Frontend: dos campos nuevos en BorradorData (`fuentes_count_al_generar`, `desactualizado`), banner amarillo con contador, label dinamico del boton ("Regenerar con evidencia actualizada"), soft gate confirmable en `produccion -> visual` con borrador desactualizado.
+
+- `f2fa14d` feat(chunk12d): refinamiento prompt Generador de Borrador modo evidencia. Nueva seccion "REGLA DE MODO DE OPERACION" en buildGeneradorBorradorPromptMP: modo 1 diagnostico (ODF vacio, borrador cauteloso con muchos `[VERIFICAR]`) vs modo 2 evidencia disponible (ODF con fuentes verificadas/contactadas, borrador afirmativo citando fuentes). Deteccion automatica del modo. Declaracion obligatoria en `notas_editoriales`.
+
+- `3d7303a` feat(chunk12e): refactor constructor pitch a fase produccion consume borrador validado. Pitch movido de fase `pesquisa` a `produccion` en PHASE_CONFIG (despues del Borrador). Handler refactorizado: guard de borrador validado, userMessage construido desde borrador.titulo/bajada/lead/cuerpo/cierre + metadata.fuentes_citadas + verificaciones. Prompt reescrito: "transforma este borrador en un pitch", regla anti-fabricacion absoluta, `[PENDIENTE]` reemplaza `[POR VERIFICAR]`. Integracion agenda-pitch del Chunk 11B preservada intacta.
+
+- `393b376` feat(chunk12f): ocultar hipotesis descartadas tras eleccion en listado. IIFE en el .map() del listado de hipotesis: si hay elegida, las descartadas se agrupan en `<details>` colapsable con `opacity-60`. Sin elegida, listado completo como antes.
+
+- `3e6e129` docs(chunk12g): cierre documental del Chunk 12. Secciones filosoficas "Por que existe IPMP" y "Filosofia del producto: filantropia digital" agregadas al inicio de CLAUDE.md. Hallazgos del Chunk 12 (bug del Pitch, loop de evidencia, modo diagnostico/evidencia, clausula de detencion, principio "asiste no automatiza", deuda tecnica codigo muerto). Chunk 12 marcado COMPLETADO en el Roadmap.
+
+Decision arquitectonica registrada: la inversion de dependencia Borrador→Pitch es la decision mas importante del Chunk 12. El Borrador se construye desde el expediente (hipotesis + fuentes + validaciones). El Pitch se construye desde el Borrador. Cada artefacto tiene un consumidor rio abajo, nunca rio arriba. Esta cadena unidireccional es la traduccion tecnica del "proceso disciplinado" descrito en "Por que existe IPMP".
+
+Hallazgos de validacion: ver seccion "Hallazgos de validacion — Chunk 12 (12 abril 2026)" mas arriba.
 
 ### Chunk 13+ — Futuros (sin orden definitivo)
 
@@ -429,3 +510,4 @@ Dependencias: Chunk 11 completo (listo, documentado retroactivamente en 12A). No
 - Asset library per tenant con versionado y metadata obligatoria (declaracion IA, alt text, origen).
 - Cleanup del map `VERIFICACION_COLORS` en `ProjectDetailClient.tsx`: eliminar la entrada `dato_referencial` que quedo huerfana despues del Chunk 9A D1 (se preservo para retrocompat de hipotesis legacy, pero se puede remover cuando se confirme que ya no quedan hipotesis antiguas con ese valor en produccion).
 - Cleanup del canal de error del Validador de Borrador: posiblemente consolidar `borradorError` y `genBorradorError` en un solo namespace cuando la arquitectura de errores evolucione. Por ahora conviven sin problemas.
+- Cleanup codigo muerto post-12E: eliminar `pitchAngulo`, `pitchTouched` y `useEffect` de prefill desde `hipotesis_elegida` en `ProjectDetailClient.tsx`. Los tres quedaron declarados pero sin uso real despues del refactor del Constructor de Pitch a fase produccion. Consolidar con el cleanup de `VERIFICACION_COLORS` (`dato_referencial` huerfano desde Chunk 9A D1).
