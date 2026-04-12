@@ -258,6 +258,9 @@ interface BorradorData {
   generadoEn: string;
   notasOperador?: string;
   modo?: string;
+  // Chunk 12C: campos de auto-invalidacion del borrador.
+  fuentes_count_al_generar?: number;
+  desactualizado?: boolean;
 }
 
 interface TenantOption {
@@ -982,6 +985,20 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
         if (!ok) return;
       }
     }
+    // Chunk 12C: soft gate de avance produccion -> visual con borrador desactualizado.
+    if (action === 'advance' && project.status === 'produccion') {
+      const dataObj = (project.data ?? {}) as Record<string, unknown>;
+      const borrador = dataObj.borrador as Record<string, unknown> | null;
+      if (borrador?.desactualizado === true) {
+        const ok = confirm(
+          'El borrador no refleja las fuentes mas recientes del ODF. ' +
+          'Si avanzas a Visual ahora, la pieza visual se va a construir ' +
+          'sobre un borrador desactualizado.\n\n' +
+          '¿Avanzar de todos modos?'
+        );
+        if (!ok) return;
+      }
+    }
 
     if (action === 'advance' && project.status === 'pesquisa' && !project.hasTenant) {
       setShowTraspaso(true);
@@ -1358,10 +1375,18 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
         );
       }
 
+      // Chunk 12C: contar fuentes al momento de la generacion para
+      // poder comparar despues si se cargaron fuentes nuevas.
+      const fuentesCountAlGenerar = Array.isArray(project.data?.fuentes)
+        ? (project.data.fuentes as unknown[]).length
+        : 0;
+
       const borradorPayload: BorradorData = {
         ...parsed,
         notasOperador: borradorOperadorNotas.trim() || undefined,
         modo: genJson.mode,
+        fuentes_count_al_generar: fuentesCountAlGenerar,
+        desactualizado: false,
       };
 
       // Persistir en data.borrador (singular, sobreescribe)
@@ -3668,7 +3693,12 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                     const tieneHipotesis = !!hipElegida && typeof hipElegida === 'object';
                     const tieneTraspaso = !!project?.tenantSlug && !!project?.templateSlug;
                     const borradorPrevio = dataObj.borrador as Record<string, unknown> | undefined;
-                    const labelBoton = borradorPrevio ? 'Regenerar Borrador' : 'Generar Borrador';
+                    const borradorDesactualizado = borradorPrevio?.desactualizado === true;
+                    const labelBoton = borradorDesactualizado
+                      ? 'Regenerar con evidencia actualizada'
+                      : borradorPrevio
+                        ? 'Regenerar Borrador'
+                        : 'Generar Borrador';
                     const disabled = !tieneHipotesis || !tieneTraspaso || generandoBorrador;
 
                     return (
@@ -3718,6 +3748,15 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
 
                   const { borrador, metadata, notas_editoriales, generadoEn } = parsed;
 
+                  // Chunk 12C: banner de borrador desactualizado
+                  const bannerDesactualizado = parsed.desactualizado === true;
+                  const fuentesAlGenerar = parsed.fuentes_count_al_generar ?? 0;
+                  const fuentesAhora = Array.isArray(
+                    (project?.data as Record<string, unknown>)?.fuentes
+                  )
+                    ? ((project?.data as Record<string, unknown>).fuentes as unknown[]).length
+                    : 0;
+
                   // Texto plano para copiar al portapapeles (modo a: solo cuerpo, sin metadata)
                   const textoPlano = (() => {
                     const partes: string[] = [];
@@ -3760,6 +3799,26 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
 
                   return (
                     <div className="bg-space-cadet/40 border border-davy-gray/30 rounded-lg p-5 space-y-5">
+                      {/* Chunk 12C: Banner de borrador desactualizado */}
+                      {bannerDesactualizado && (
+                        <div className="p-4 bg-yellow-500/10 border border-yellow-500/40 rounded">
+                          <div className="flex items-start gap-3">
+                            <div className="text-yellow-400 text-xl leading-none mt-0.5">!</div>
+                            <div className="flex-1">
+                              <p className="text-sm font-semibold text-yellow-200 mb-1">
+                                Borrador desactualizado
+                              </p>
+                              <p className="text-xs text-yellow-100/80">
+                                Este borrador no refleja las fuentes mas recientes del ODF.
+                                Generado con {fuentesAlGenerar} fuente(s),
+                                ahora hay {fuentesAhora}.
+                                Regeneralo para incorporar la evidencia nueva.
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
                       <div className="flex items-center justify-between">
                         <h3 className="text-seasalt text-sm font-semibold uppercase tracking-wide">
                           Borrador generado

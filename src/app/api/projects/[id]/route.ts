@@ -350,6 +350,29 @@ export async function PATCH(
       }
     }
 
+    // Chunk 12C: auto-invalidacion del borrador cuando se cargan fuentes nuevas
+    // al ODF. Si el borrador existe y la cantidad de fuentes aumento respecto al
+    // estado anterior, marcamos el borrador como desactualizado.
+    if (updates.data && typeof updates.data === 'object') {
+      const mergedData = updates.data as Record<string, unknown>;
+      const currentData = (project.data as Record<string, unknown>) ?? {};
+      const fuentesAntes = Array.isArray(currentData.fuentes)
+        ? (currentData.fuentes as unknown[]).length
+        : 0;
+      const fuentesDespues = Array.isArray(mergedData.fuentes)
+        ? (mergedData.fuentes as unknown[]).length
+        : 0;
+      const borradorExiste =
+        mergedData.borrador != null && typeof mergedData.borrador === 'object';
+
+      if (borradorExiste && fuentesDespues > fuentesAntes) {
+        mergedData.borrador = {
+          ...(mergedData.borrador as Record<string, unknown>),
+          desactualizado: true,
+        };
+      }
+    }
+
     // Ejecutar update
     const [updated] = await db
       .update(projects)
