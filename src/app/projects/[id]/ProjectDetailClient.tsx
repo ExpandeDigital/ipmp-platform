@@ -4095,9 +4095,37 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
             </div>
 
             <div className="space-y-3">
-              {savedHipotesis.hipotesis.map((h, idx) => (
-                <div key={idx}>{renderHipotesisCard(h, idx, false)}</div>
-              ))}
+              {/* Chunk 12F: si hay hipotesis elegida, filtrar la elegida del listado
+                  y agrupar las descartadas en un disclosure colapsable. Si no hay
+                  elegida, mostrar el listado completo como antes. */}
+              {(() => {
+                if (!savedHipotesisElegida) {
+                  // Sin elegida: listado completo sin filtrar
+                  return savedHipotesis.hipotesis.map((h, idx) => (
+                    <div key={idx}>{renderHipotesisCard(h, idx, false)}</div>
+                  ));
+                }
+
+                // Con elegida: filtrar por titulo y agrupar descartadas
+                const descartadas = savedHipotesis.hipotesis
+                  .map((h, idx) => ({ h, idx }))
+                  .filter(({ h }) => h.titulo !== elegidaKey);
+
+                if (descartadas.length === 0) return null;
+
+                return (
+                  <details>
+                    <summary className="cursor-pointer text-sm text-davy-gray hover:text-seasalt transition-colors">
+                      Ver {descartadas.length} hipotesis descartada{descartadas.length !== 1 ? 's' : ''}
+                    </summary>
+                    <div className="mt-3 space-y-3 opacity-60">
+                      {descartadas.map(({ h, idx }) => (
+                        <div key={idx}>{renderHipotesisCard(h, idx, false)}</div>
+                      ))}
+                    </div>
+                  </details>
+                );
+              })()}
             </div>
 
             {savedHipotesis.notaEditorial && (
