@@ -640,7 +640,7 @@ visuales ausentes del borrador.
 - **15B** `058d4e1` feat(chunk15b): UI upload archivos por fuente ODF integrado con Vercel Blob.
 - **15B fix** `7865763` fix(chunk15b): cambiar access blob a private compatible con store configuracion.
 - **15C** `fa01e09` feat(chunk15c): contrato deletion blob al eliminar fuente ODF best-effort.
-- **15G** `[HASH]` docs(chunk15g): cierre documental Chunk 15.
+- **15G** `21b455a` docs(chunk15g): cierre documental Chunk 15.
 
 Decision arquitectonica registrada: el upload de archivos usa Vercel Blob
 con access privado. Las URLs generadas tienen token temporal incorporado
