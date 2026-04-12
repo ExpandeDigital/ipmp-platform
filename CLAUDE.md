@@ -671,7 +671,7 @@ huerfanos son recuperables desde el dashboard de Vercel.
   archivo_size no se persistia en el upload inicial (Chunk 15). Se
   populara automaticamente en reemplazos sucesivos.
 
-- **16G** `[HASH]` docs(chunk16g): cierre documental Chunk 16.
+- **16G** `ade2cc8` docs(chunk16g): cierre documental Chunk 16.
 
 Decision arquitectonica registrada: el contrato de V2 es aditivo, no
 destructivo. El blob V1 no se elimina — queda referenciado en
