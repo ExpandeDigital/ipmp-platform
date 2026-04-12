@@ -277,7 +277,7 @@ interface TemplateOption {
   reviewLevel: string;
 }
 
-type ActiveTool = 'hipotesis' | 'vhp' | 'odf' | 'pitch' | 'radar' | 'validador' | 'borrador';
+type ActiveTool = 'hipotesis' | 'vhp' | 'odf' | 'pitch' | 'radar' | 'validador' | 'borrador' | 'exportador';
 
 interface PhaseConfig {
   tabs: { key: ActiveTool; label: string }[];
@@ -439,8 +439,7 @@ const PHASE_CONFIG: Record<string, PhaseConfig> = {
     info: 'Project aprobado. Listo para exportar.',
   },
   exportado: {
-    tabs: [],
-    placeholder: 'Exportador — fase futura',
+    tabs: [{ key: 'exportador', label: '📦 Exportar proyecto' }],
   },
 };
 
@@ -829,6 +828,10 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
   // Chunk 12B: modal del exportador de pesquisa externa
   const [exportadorAbierto, setExportadorAbierto] = useState(false);
   const [exportadorCopiado, setExportadorCopiado] = useState(false);
+
+  // Chunk 13B: exportador ZIP de fase exportado
+  const [exportandoZip, setExportandoZip] = useState(false);
+  const [exportZipError, setExportZipError] = useState<string | null>(null);
 
   // ── Cargar project ──
   const fetchProject = useCallback(async () => {
@@ -4093,6 +4096,60 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                     </div>
                   );
                 })()}
+              </div>
+            )}
+
+            {/* ── TAB: Exportador ZIP (Chunk 13B: fase exportado) ── */}
+            {activeTool === 'exportador' && phaseConfig.tabs.some((t) => t.key === 'exportador') && (
+              <div className="space-y-4">
+                <h2 className="text-seasalt text-xl font-semibold">📦 Exportar proyecto completo</h2>
+                <p className="text-davy-gray text-sm">
+                  Descarga un archivo ZIP con el contenido del proyecto listo para archivar o compartir.
+                  Incluye el JSON completo del proyecto, el borrador en Markdown, el pitch en Markdown,
+                  las fuentes del ODF y las hipotesis generadas.
+                </p>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!project) return;
+                    setExportandoZip(true);
+                    setExportZipError(null);
+                    try {
+                      const res = await fetch(`/api/projects/${project.id}/export`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ format: 'zip' }),
+                      });
+                      if (!res.ok) {
+                        const errJson = await res.json().catch(() => ({}));
+                        throw new Error((errJson as Record<string, string>).error || 'Error generando ZIP');
+                      }
+                      const blob = await res.blob();
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `${project.publicId}-export.zip`;
+                      document.body.appendChild(a);
+                      a.click();
+                      document.body.removeChild(a);
+                      URL.revokeObjectURL(url);
+                    } catch (err) {
+                      setExportZipError(err instanceof Error ? err.message : 'Error desconocido');
+                    } finally {
+                      setExportandoZip(false);
+                    }
+                  }}
+                  disabled={exportandoZip}
+                  className="px-6 py-3 bg-amber-brand text-oxford-blue font-semibold rounded
+                             hover:bg-amber-brand/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {exportandoZip ? 'Generando ZIP...' : 'Descargar ZIP'}
+                </button>
+                {exportZipError && (
+                  <div className="bg-red-500/10 border border-red-500/40 rounded p-3">
+                    <p className="text-red-400 text-sm">{exportZipError}</p>
+                  </div>
+                )}
               </div>
             )}
           </div>
