@@ -272,6 +272,15 @@ interface BorradorData {
   desactualizado?: boolean;
 }
 
+// Chunk 20A: imagen visual generada externamente
+interface ImagenVisualData {
+  url: string;
+  nombre: string;
+  size: number;
+  mimeType: string;
+  subidaEn: string;
+}
+
 interface TenantOption {
   slug: string;
   name: string;
@@ -286,10 +295,10 @@ interface TemplateOption {
   reviewLevel: string;
 }
 
-type ActiveTool = 'hipotesis' | 'vhp' | 'odf' | 'pitch' | 'radar' | 'validador' | 'validador_ip' | 'borrador' | 'borrador_ip' | 'exportador' | 'prompt_visual';
+type ActiveTool = 'hipotesis' | 'vhp' | 'odf' | 'pitch' | 'radar' | 'validador' | 'validador_ip' | 'borrador' | 'borrador_ip' | 'exportador' | 'prompt_visual' | 'vista_previa';
 
 interface PhaseConfig {
-  tabs: { key: ActiveTool; label: string }[];
+  tabs: { key: ActiveTool; label: string; subtitle?: string }[];
   placeholder?: string;
   info?: string;
 }
@@ -436,38 +445,39 @@ const PHASE_CONFIG: Record<string, PhaseConfig> = {
   },
   validacion: {
     tabs: [
-      { key: 'hipotesis', label: '🔬 Generador de Hipótesis' },
-      { key: 'vhp', label: '🧪 Validador de Hipótesis y Pista' },
+      { key: 'hipotesis', label: '🔬 Generador de Hipótesis', subtitle: 'Genera hipotesis periodisticas a partir del tema del proyecto' },
+      { key: 'vhp', label: '🧪 Validador de Hipótesis y Pista', subtitle: 'Evalua la viabilidad de un lead contra la hipotesis elegida' },
     ],
   },
   pesquisa: {
     tabs: [
-      { key: 'odf', label: '🗂️ Organizador de Fuentes' },
-      { key: 'borrador_ip', label: '📄 Documento de Investigacion' },
-      { key: 'validador_ip', label: '✅ Validador IP' },
-      { key: 'radar', label: '📡 Radar Editorial' },
+      { key: 'odf', label: '🗂️ Organizador de Fuentes', subtitle: 'Registra y gestiona las fuentes documentales del expediente' },
+      { key: 'borrador_ip', label: '📄 Documento de Investigacion', subtitle: 'Genera el documento base de investigacion a partir del expediente' },
+      { key: 'validador_ip', label: '✅ Validador IP', subtitle: 'Evalua la calidad del documento de investigacion antes del traspaso' },
+      { key: 'radar', label: '📡 Radar Editorial', subtitle: 'Audita cobertura externa del tema en otros medios' },
     ],
   },
   produccion: {
     tabs: [
-      { key: 'borrador', label: '✍️ Generador de Borrador' },
+      { key: 'borrador', label: '✍️ Generador de Borrador', subtitle: 'Produce el borrador editorial con genero y voz de marca' },
     ],
   },
   visual: {
     tabs: [
-      { key: 'prompt_visual', label: '🎨 Generador de Prompt Visual' },
-      { key: 'pitch', label: '📨 Constructor de Pitch' },
+      { key: 'prompt_visual', label: '🎨 Generador de Prompt Visual', subtitle: 'Crea un prompt estructurado para generar la imagen editorial' },
+      { key: 'pitch', label: '📨 Constructor de Pitch', subtitle: 'Transforma el borrador aprobado en un pitch para el editor destino' },
     ],
   },
   revision: {
-    tabs: [{ key: 'validador', label: '✅ Validador de Tono del Borrador' }],
+    tabs: [{ key: 'validador', label: '✅ Validador de Tono del Borrador', subtitle: 'Audita tono, precision y alineacion de marca del borrador' }],
   },
   aprobado: {
-    tabs: [],
-    info: 'Project aprobado. Listo para exportar.',
+    tabs: [
+      { key: 'vista_previa', label: '👁️ Vista Previa — Lectura Final', subtitle: 'Revision tipografica del borrador aprobado antes de exportar' },
+    ],
   },
   exportado: {
-    tabs: [{ key: 'exportador', label: '📦 Exportar proyecto' }],
+    tabs: [{ key: 'exportador', label: '📦 Exportar proyecto', subtitle: 'Descarga el ZIP con todos los artefactos del proyecto' }],
   },
 };
 
@@ -925,6 +935,10 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
   // Chunk 14B: generador de prompt visual
   const [generandoPromptVisual, setGenerandoPromptVisual] = useState(false);
   const [genPromptVisualError, setGenPromptVisualError] = useState<string | null>(null);
+
+  // Chunk 20A: upload de imagen visual
+  const [subiendoImagenVisual, setSubiendoImagenVisual] = useState(false);
+  const [imagenVisualError, setImagenVisualError] = useState<string | null>(null);
 
   // ── Cargar project ──
   const fetchProject = useCallback(async () => {
@@ -2199,6 +2213,64 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
     }
   }
 
+  // ── Upload de imagen visual (Chunk 20A) ──
+  async function handleUploadImagenVisual(file: File) {
+    if (!project) return;
+    setSubiendoImagenVisual(true);
+    setImagenVisualError(null);
+
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!allowedTypes.includes(file.type)) {
+      setImagenVisualError('Solo se permiten imagenes JPEG, PNG o WebP.');
+      setSubiendoImagenVisual(false);
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setImagenVisualError('El archivo excede el limite de 10 MB.');
+      setSubiendoImagenVisual(false);
+      return;
+    }
+
+    try {
+      // Paso 1: upload del blob via el endpoint existente de fuentes
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('fuenteId', `visual-${project.id}`);
+
+      const uploadRes = await fetch('/api/fuentes/upload', {
+        method: 'POST',
+        body: formData,
+      });
+      const uploadJson = await uploadRes.json();
+      if (!uploadRes.ok) throw new Error(uploadJson.error || 'Error subiendo imagen');
+
+      // Paso 2: persistir metadata en data.imagen_visual
+      const imagenVisual: ImagenVisualData = {
+        url: uploadJson.url,
+        nombre: file.name,
+        size: file.size,
+        mimeType: file.type,
+        subidaEn: new Date().toISOString(),
+      };
+
+      const patchRes = await fetch(`/api/projects/${project.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: { imagen_visual: imagenVisual } }),
+      });
+      if (!patchRes.ok) {
+        const patchJson = await patchRes.json().catch(() => ({}));
+        throw new Error((patchJson as Record<string, string>).error || 'Error guardando metadata');
+      }
+
+      await fetchProject();
+    } catch (err) {
+      setImagenVisualError(err instanceof Error ? err.message : 'Error desconocido');
+    } finally {
+      setSubiendoImagenVisual(false);
+    }
+  }
+
   // ── Organizador de Fuentes Forenses (ODF) — Chunk 7 ──
   function resetOdfForm() {
     setOdfTipo('documento');
@@ -3394,27 +3466,20 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
               </div>
             )}
 
-            {/* ── Info (draft, aprobado) ── */}
+            {/* ── Subtitle descriptivo del tab activo (Chunk 20A) ── */}
+            {(() => {
+              const activeTabConfig = phaseConfig.tabs.find((t) => t.key === activeTool);
+              if (!activeTabConfig?.subtitle) return null;
+              return (
+                <p className="text-davy-gray text-sm mb-4">{activeTabConfig.subtitle}</p>
+              );
+            })()}
+
+            {/* ── Info (draft — fases sin tabs) ── */}
             {phaseConfig.tabs.length === 0 && phaseConfig.info && (
               <div className="text-center py-10">
-                {project.status === 'aprobado' ? (
-                  <>
-                    <div className="text-5xl mb-3">✓</div>
-                    <p className="text-green-400 text-lg mb-4">{phaseConfig.info}</p>
-                    <button
-                      disabled
-                      className="px-6 py-2 bg-amber-brand/20 border border-amber-brand/40 text-amber-brand rounded opacity-50 cursor-not-allowed"
-                      title="Exportador — fase futura"
-                    >
-                      📤 Exportar (próximamente)
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <div className="text-5xl mb-3">📝</div>
-                    <p className="text-davy-gray">{phaseConfig.info}</p>
-                  </>
-                )}
+                <div className="text-5xl mb-3">📝</div>
+                <p className="text-davy-gray">{phaseConfig.info}</p>
               </div>
             )}
 
@@ -5483,6 +5548,166 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                           </p>
                         </div>
                       )}
+                    </>
+                  );
+                })()}
+
+                {/* ── Seccion: Upload de imagen visual (Chunk 20A) ── */}
+                <div className="mt-8 pt-6 border-t border-davy-gray/20">
+                  <h3 className="text-seasalt text-sm font-semibold mb-2">Imagen visual generada</h3>
+                  <p className="text-davy-gray text-xs mb-3">
+                    Sube la imagen que generaste con la herramienta externa. Solo JPEG, PNG o WebP (max 10 MB).
+                  </p>
+
+                  {(() => {
+                    const dataObj = (project.data ?? {}) as Record<string, unknown>;
+                    const imgRaw = dataObj.imagen_visual as Record<string, unknown> | undefined;
+                    const hasImage = imgRaw && typeof imgRaw === 'object' && typeof imgRaw.url === 'string';
+
+                    return (
+                      <>
+                        {hasImage && (
+                          <div className="mb-4 space-y-2">
+                            <div className="relative inline-block">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={String(imgRaw.url)}
+                                alt="Imagen visual del proyecto"
+                                className="max-h-64 rounded border border-davy-gray/30"
+                              />
+                            </div>
+                            <div className="flex items-center gap-3 text-xs text-davy-gray">
+                              <span>{String(imgRaw.nombre ?? '')}</span>
+                              {typeof imgRaw.subidaEn === 'string' && (
+                                <span>Subida: {new Date(imgRaw.subidaEn).toLocaleString('es-CL')}</span>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        <label className="inline-flex items-center gap-2 px-4 py-2 bg-oxford-blue border border-davy-gray/40 text-seasalt text-sm rounded hover:border-amber-brand/60 transition-colors cursor-pointer">
+                          <span>{subiendoImagenVisual ? 'Subiendo...' : hasImage ? 'Reemplazar imagen' : 'Subir imagen'}</span>
+                          <input
+                            type="file"
+                            accept="image/jpeg,image/png,image/webp"
+                            className="hidden"
+                            disabled={subiendoImagenVisual}
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) handleUploadImagenVisual(file);
+                              e.target.value = '';
+                            }}
+                          />
+                        </label>
+
+                        {imagenVisualError && (
+                          <div className="mt-2 bg-red-500/10 border border-red-500/40 rounded p-3">
+                            <p className="text-red-400 text-sm">{imagenVisualError}</p>
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
+                </div>
+              </div>
+            )}
+
+            {/* ── TAB: Vista Previa — Lectura Final (Chunk 20A: fase aprobado) ── */}
+            {activeTool === 'vista_previa' && phaseConfig.tabs.some((t) => t.key === 'vista_previa') && (
+              <div className="space-y-6">
+                {(() => {
+                  const dataObj = (project.data ?? {}) as Record<string, unknown>;
+                  const borradorRaw = dataObj.borrador as Record<string, unknown> | undefined;
+                  const imgRaw = dataObj.imagen_visual as Record<string, unknown> | undefined;
+                  const hasImage = imgRaw && typeof imgRaw === 'object' && typeof imgRaw.url === 'string';
+
+                  if (!borradorRaw || typeof borradorRaw !== 'object') {
+                    return (
+                      <div className="bg-red-500/10 border border-red-500/40 rounded p-4">
+                        <p className="text-red-400 text-sm">
+                          El proyecto no tiene borrador. Genera el borrador en la fase Produccion.
+                        </p>
+                      </div>
+                    );
+                  }
+
+                  const parsed = parseBorradorFromRaw(borradorRaw);
+                  if (!parsed) {
+                    return (
+                      <div className="bg-red-500/10 border border-red-500/40 rounded p-4">
+                        <p className="text-red-400 text-sm">El borrador no tiene estructura valida.</p>
+                      </div>
+                    );
+                  }
+
+                  const { contenido: b, metadata: m } = parsed;
+                  const wordCount = buildBorradorTextoPlano(parsed).split(/\s+/).filter(Boolean).length;
+
+                  return (
+                    <>
+                      {/* Imagen visual */}
+                      {hasImage && (
+                        <div className="flex justify-center">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={String(imgRaw.url)}
+                            alt="Imagen visual del proyecto"
+                            className="max-h-80 rounded border border-davy-gray/30"
+                          />
+                        </div>
+                      )}
+
+                      {/* Borrador en formato tipografico */}
+                      <article className="bg-seasalt/5 rounded-lg border border-davy-gray/20 p-8 max-w-3xl mx-auto">
+                        {b.titulo && (
+                          <h1 className="text-seasalt text-2xl font-bold mb-2 leading-tight">{b.titulo}</h1>
+                        )}
+                        {b.bajada && (
+                          <p className="text-davy-gray text-lg italic mb-4 leading-relaxed">{b.bajada}</p>
+                        )}
+                        {b.lead && (
+                          <p className="text-seasalt text-base font-medium mb-6 leading-relaxed">{b.lead}</p>
+                        )}
+                        {b.cuerpo.map((sec, idx) => (
+                          <div key={idx} className="mb-5">
+                            {sec.subtitulo && (
+                              <h2 className="text-amber-brand text-lg font-semibold mb-2">{sec.subtitulo}</h2>
+                            )}
+                            {sec.parrafos.map((p, pIdx) => (
+                              <p key={pIdx} className="text-seasalt/90 text-base leading-relaxed mb-3">{p}</p>
+                            ))}
+                          </div>
+                        ))}
+                        {b.cierre && (
+                          <p className="text-seasalt/80 text-base italic mt-6 pt-4 border-t border-davy-gray/20 leading-relaxed">
+                            {b.cierre}
+                          </p>
+                        )}
+                      </article>
+
+                      {/* Footer con stats */}
+                      <div className="flex flex-wrap items-center justify-between gap-4 text-xs text-davy-gray bg-oxford-blue/50 rounded p-4">
+                        <div className="flex gap-4">
+                          <span>{wordCount} palabras</span>
+                          <span>{m.fuentes_citadas.length} fuentes citadas</span>
+                          <span>{m.verificaciones_criticas_pendientes.length} verificaciones pendientes</span>
+                        </div>
+                        {parsed.generadoEn && (
+                          <span>Borrador generado: {new Date(parsed.generadoEn).toLocaleString('es-CL')}</span>
+                        )}
+                      </div>
+
+                      {/* Boton retroceder */}
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => handlePipelineAction('retreat')}
+                          disabled={actionLoading}
+                          className="px-4 py-2 text-sm text-davy-gray border border-davy-gray/30 rounded hover:text-seasalt hover:border-davy-gray/60 transition-colors disabled:opacity-50"
+                        >
+                          ← Volver a Visual
+                        </button>
+                      </div>
                     </>
                   );
                 })()}

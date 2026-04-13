@@ -145,6 +145,21 @@ export async function POST(
       folder.file('hipotesis.json', JSON.stringify(data.hipotesis, null, 2));
     }
 
+    // 6. imagen-visual — si existe (Chunk 20A, best-effort)
+    const imgData = data.imagen_visual as Record<string, unknown> | undefined;
+    if (imgData && typeof imgData.url === 'string' && typeof imgData.nombre === 'string') {
+      try {
+        const imgRes = await fetch(imgData.url as string);
+        if (imgRes.ok) {
+          const imgBuf = Buffer.from(await imgRes.arrayBuffer());
+          const ext = (imgData.nombre as string).split('.').pop()?.toLowerCase() ?? 'jpg';
+          folder.file(`imagen-visual.${ext}`, imgBuf);
+        }
+      } catch (imgErr) {
+        console.warn('[export] imagen_visual fetch failed (best-effort):', imgErr);
+      }
+    }
+
     const zipBuffer = await zip.generateAsync({ type: 'nodebuffer' });
 
     return new NextResponse(zipBuffer, {
