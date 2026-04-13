@@ -405,6 +405,22 @@ const VEREDICTO_LABELS: Record<string, { label: string; color: string }> = {
   no_publicable: { label: '❌ No publicable', color: 'text-red-400' },
 };
 
+const TEMPLATE_DESCRIPTIONS: Record<string, string> = {
+  'reportaje-profundidad': 'Pieza de largo aliento con fuentes verificadas. 1.500–4.000 palabras.',
+  'cronica-narrativa': 'Narrativa periodística con estructura literaria. 900–2.500 palabras.',
+  'nota-prensa': 'Comunicado institucional formal. 400–800 palabras.',
+  'columna-opinion': 'Análisis firmado con posición editorial explícita. 500–900 palabras.',
+  'editorial': 'Posición institucional en voz colectiva. 400–700 palabras.',
+  'carta-director': 'Una sola idea clara, máximo 300 palabras.',
+  'paper-academico': 'Documento con estructura IMRAD y referencias bibliográficas. 2.500–6.000 palabras.',
+  'asesoria-legislativa': 'Informe técnico para tomadores de decisión. Toda referencia normativa lleva [VERIFICAR].',
+  'white-paper': 'Documento de posición institucional con evidencia técnica. 1.800–4.000 palabras.',
+  'informe-tecnico': 'Informe estructurado con metodología y hallazgos. 1.500–3.500 palabras.',
+  'investigacion-forense': 'Investigación rigurosa con cadena de custodia de fuentes. 2.500–5.000 palabras.',
+  'minuta-ejecutiva': 'Resumen ejecutivo para directivos. 1–2 páginas.',
+  'entrevista': 'Perfil periodístico basado en conversación directa. 800–2.000 palabras.',
+};
+
 const FAMILY_LABELS: Record<string, string> = {
   prensa: 'Prensa',
   opinion: 'Opinión',
@@ -3025,6 +3041,9 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                     </optgroup>
                   ))}
                 </select>
+                {TEMPLATE_DESCRIPTIONS[traspasoTemplate] && (
+                  <p className="text-xs text-gray-500 mt-1">{TEMPLATE_DESCRIPTIONS[traspasoTemplate]}</p>
+                )}
               </div>
 
               {/* Preview nuevo publicId */}
@@ -3144,20 +3163,60 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
               </span>
             </div>
           </div>
-          {project.thesis ? (
-            <div className="mt-4 pt-4 border-t border-davy-gray/20">
-              <span className="text-davy-gray text-sm">Tesis:</span>
-              <p className="text-seasalt mt-1">{project.thesis}</p>
-            </div>
-          ) : (
-            <div className="mt-4 pt-4 border-t border-davy-gray/20">
-              <span className="text-davy-gray text-sm">Tesis:</span>
-              <p className="text-davy-gray/70 text-sm italic mt-1">
-                Aun no hay tesis definida. Puedes generar hipotesis en la fase Validacion
-                y la tesis va a emerger de la hipotesis que elijas.
-              </p>
-            </div>
-          )}
+          {(() => {
+            const hipElegidaRaw = project.data?.hipotesis_elegida as Record<string, unknown> | undefined;
+            const tituloHipElegida = hipElegidaRaw?.titulo as string | undefined;
+            const thesisObsoleta = !!tituloHipElegida;
+
+            if (project.thesis && thesisObsoleta) {
+              return (
+                <div className="mt-4 pt-4 border-t border-davy-gray/20 space-y-3">
+                  <div className="opacity-50 text-sm">
+                    <span className="text-xs text-gray-400 italic">Tesis original</span>
+                    <p className="text-seasalt mt-1">{project.thesis}</p>
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-davy-gray text-sm font-semibold">Hipótesis elegida</span>
+                      <span className="bg-green-100 text-green-800 text-xs px-2 py-0.5 rounded-full">Activa</span>
+                    </div>
+                    <p className="text-seasalt mt-1">{tituloHipElegida}</p>
+                  </div>
+                </div>
+              );
+            }
+
+            if (project.thesis) {
+              return (
+                <div className="mt-4 pt-4 border-t border-davy-gray/20">
+                  <span className="text-davy-gray text-sm">Tesis:</span>
+                  <p className="text-seasalt mt-1">{project.thesis}</p>
+                </div>
+              );
+            }
+
+            if (tituloHipElegida) {
+              return (
+                <div className="mt-4 pt-4 border-t border-davy-gray/20">
+                  <div className="flex items-center gap-2">
+                    <span className="text-davy-gray text-sm font-semibold">Hipótesis elegida</span>
+                    <span className="bg-green-100 text-green-800 text-xs px-2 py-0.5 rounded-full">Activa</span>
+                  </div>
+                  <p className="text-seasalt mt-1">{tituloHipElegida}</p>
+                </div>
+              );
+            }
+
+            return (
+              <div className="mt-4 pt-4 border-t border-davy-gray/20">
+                <span className="text-davy-gray text-sm">Tesis:</span>
+                <p className="text-davy-gray/70 text-sm italic mt-1">
+                  Aun no hay tesis definida. Puedes generar hipotesis en la fase Validacion
+                  y la tesis va a emerger de la hipotesis que elijas.
+                </p>
+              </div>
+            );
+          })()}
         </section>
 
         {/* ══════════════════════════════════════════════════════ */}
@@ -3831,6 +3890,28 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                       <p className="text-green-400 text-xs">
                         Borrador disponible: <span className="font-medium text-seasalt">{String((borrRaw as Record<string, unknown>).titulo ?? '')}</span>
                       </p>
+                    </div>
+                  );
+                })()}
+                {(() => {
+                  const pitchFecha = (project?.data as Record<string, unknown> | undefined)?.pitch
+                    ? new Date(String(((project?.data as Record<string, unknown>).pitch as Record<string, unknown>)?.generadoEn ?? ''))
+                    : null;
+                  const borradorFecha = (project?.data as Record<string, unknown> | undefined)?.borrador
+                    ? new Date(String(((project?.data as Record<string, unknown>).borrador as Record<string, unknown>)?.generadoEn ?? ''))
+                    : null;
+                  const pitchEsAnterior = pitchFecha && borradorFecha
+                    && !isNaN(pitchFecha.getTime()) && !isNaN(borradorFecha.getTime())
+                    && pitchFecha < borradorFecha;
+                  if (!pitchEsAnterior) return null;
+                  return (
+                    <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 mb-4">
+                      <span>⚠️</span>
+                      <span>
+                        Este pitch fue generado antes del borrador actual. El gate de
+                        exportación lo va a bloquear. Regenerá el pitch para que refleje
+                        el contenido definitivo.
+                      </span>
                     </div>
                   );
                 })()}
