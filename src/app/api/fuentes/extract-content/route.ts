@@ -13,7 +13,7 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
 
-const MAX_CHARS = 12000;
+const MAX_CHARS = 50000;
 
 interface ExtractRequest {
   blobUrl: string;
@@ -85,13 +85,14 @@ export async function POST(request: NextRequest) {
     }
 
     if (!text || text.trim().length === 0) {
-      return NextResponse.json({ content: null, truncated: false });
+      return NextResponse.json({ content: null, truncated: false, charCount: 0, originalLength: 0 });
     }
 
-    const truncated = text.length > MAX_CHARS;
+    const originalLength = text.length;
+    const truncated = originalLength > MAX_CHARS;
     const content = truncated ? text.slice(0, MAX_CHARS) : text;
 
-    return NextResponse.json({ content, truncated });
+    return NextResponse.json({ content, truncated, charCount: content.length, originalLength });
   } catch (error) {
     console.error('[POST /api/fuentes/extract-content] Error:', error);
     return NextResponse.json(

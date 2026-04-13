@@ -912,6 +912,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
   const [borradorIPNotas, setBorradorIPNotas] = useState('');
   const [generandoBorradorIP, setGenerandoBorradorIP] = useState(false);
   const [genBorradorIPError, setGenBorradorIPError] = useState<string | null>(null);
+  const [borradorIPTruncWarnings, setBorradorIPTruncWarnings] = useState<string[]>([]);
 
   // Chunk 12B: modal del exportador de pesquisa externa
   const [exportadorAbierto, setExportadorAbierto] = useState(false);
@@ -1592,6 +1593,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
 
     setGenerandoBorradorIP(true);
     setGenBorradorIPError(null);
+    setBorradorIPTruncWarnings([]);
 
     try {
       const heRaw = hipotesisElegida as Record<string, unknown>;
@@ -1602,6 +1604,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
 
       // Paso 1: extraer contenido de archivos adjuntos
       const fuentesConContenido: Array<{ nombre: string; contenido: string }> = [];
+      const truncWarnings: string[] = [];
       for (const f of fuentes) {
         if (f.archivo_url && typeof f.archivo_url === 'string') {
           try {
@@ -1621,12 +1624,21 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
                 nombre: String(f.nombre_titulo ?? 'Fuente sin nombre'),
                 contenido: extractJson.content,
               });
+              if (extractJson.truncated) {
+                const pct = Math.round(
+                  (Number(extractJson.charCount) / Number(extractJson.originalLength)) * 100
+                );
+                truncWarnings.push(
+                  `${String(f.nombre_titulo ?? 'Fuente sin nombre')}: se extrajeron ${Number(extractJson.charCount).toLocaleString()} de ${Number(extractJson.originalLength).toLocaleString()} caracteres (${pct}%).`
+                );
+              }
             }
           } catch {
             // Best-effort: si falla la extraccion, seguimos sin ese contenido
           }
         }
       }
+      if (truncWarnings.length > 0) setBorradorIPTruncWarnings(truncWarnings);
 
       // Paso 2: construir userMessage
       let userMessage = '';
@@ -4296,6 +4308,24 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                       {genBorradorIPError && (
                         <div className="bg-red-500/10 border border-red-500/40 rounded p-3">
                           <p className="text-red-400 text-sm">{genBorradorIPError}</p>
+                        </div>
+                      )}
+
+                      {/* Truncation warnings */}
+                      {borradorIPTruncWarnings.length > 0 && (
+                        <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                          <span>⚠️</span>
+                          <div>
+                            <p className="font-medium mb-1">Documentos procesados parcialmente:</p>
+                            <ul className="space-y-0.5">
+                              {borradorIPTruncWarnings.map((w, i) => (
+                                <li key={i}>{w}</li>
+                              ))}
+                            </ul>
+                            <p className="text-xs mt-1 text-amber-700">
+                              El borrador IP se genero con la porcion disponible.
+                            </p>
+                          </div>
                         </div>
                       )}
 
