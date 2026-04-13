@@ -1363,3 +1363,32 @@ Razon: el JOIN complicaria el GROUP BY y la lista de tenants
 ya esta disponible en el client para los selectores de filtro.
 La resolucion client-side con Map es O(1) por row y no requiere
 infraestructura adicional.
+
+## Hallazgos de validacion — Chunk 22 (13 abril 2026)
+
+### a) Chunk 22A — Filtros en listado de proyectos
+
+ProjectsClient.tsx ya tenia filtros de tenant y status
+implementados desde chunks anteriores. El Chunk 22A agrego
+la busqueda por titulo (input + boton Buscar + boton limpiar
+con activacion por Enter o click) y corrigio el orden de
+PIPELINE_PHASES al orden canonico post-14A:
+draft, validacion, pesquisa, produccion, revision, aprobado,
+visual, exportado. Se agrego flex-wrap al contenedor de
+filtros para soporte en pantallas angostas.
+Un solo archivo modificado: ProjectsClient.tsx.
+Commit: 1809615.
+
+### b) Chunk 22B — Editor en pitch.docx (hallazgo: ya implementado)
+
+El objetivo del 22B era agregar el editor elegido al pitch.docx
+del ZIP exportado. El reconocimiento de Claude Code determino
+que el feature ya estaba implementado desde el Chunk 12E:
+pitchMedio (estado React local en ProjectDetailClient.tsx)
+se persiste en data.pitch.medio_destino al generar el pitch
+(linea 2083). buildPitchDocx en export/route.ts ya renderiza
+ese campo bajo el H2 Detalles de envio despues del cuerpo del
+pitch. La seccion se omite silenciosamente si el campo esta
+vacio. No se realizaron cambios de codigo. El feature funciona
+correctamente cuando el operador tiene editores cargados en
+la Agenda y genera el pitch con un editor asignado.
