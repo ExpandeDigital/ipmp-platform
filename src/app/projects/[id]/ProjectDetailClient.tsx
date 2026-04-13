@@ -836,8 +836,9 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
   // Traspaso
   const [showTraspaso, setShowTraspaso] = useState(false);
   const [exportGateConditions, setExportGateConditions] = useState<
-    Array<{ id: string; passed: boolean; descripcion: string }> | null
+    Array<{ id: string; passed: boolean; descripcion: string; soft?: boolean }> | null
   >(null);
+  const [c4Ack, setC4Ack] = useState(false);
   const [tenantsList, setTenantsList] = useState<TenantOption[]>([]);
   const [templatesList, setTemplatesList] = useState<TemplateOption[]>([]);
   const [traspasoTenant, setTraspasoTenant] = useState('');
@@ -1070,10 +1071,14 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
 
     setActionLoading(true);
     try {
+      const patchBody: Record<string, unknown> = { action };
+      if (action === 'advance' && project.status === 'visual' && c4Ack) {
+        patchBody.c4Acknowledged = true;
+      }
       const res = await fetch(`/api/projects/${project.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action }),
+        body: JSON.stringify(patchBody),
       });
       const json = await res.json();
       if (!res.ok) {
@@ -1087,12 +1092,17 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
           setExportGateConditions(json.conditions);
           return;
         }
+        if (json.code === 'C4_ACK_REQUIRED') {
+          setExportGateConditions(json.conditions);
+          return;
+        }
         if (json.code === 'BORRADOR_IP_REQUIRED') {
           alert(json.error);
           return;
         }
         throw new Error(json.error);
       }
+      setC4Ack(false);
       await fetchProject();
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Error al cambiar estado');
@@ -3090,35 +3100,75 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
         )}
 
         {/* ── Chunk 18A: Export Gate — condiciones fallidas ── */}
-        {exportGateConditions && (
-          <section className="bg-space-cadet rounded-lg border-2 border-red-500/50 p-6">
-            <h2 className="text-red-400 font-semibold mb-1">
-              Requisitos para exportar
-            </h2>
-            <p className="text-davy-gray text-sm mb-4">
-              El proyecto debe cumplir todas las condiciones antes de poder exportarse.
-            </p>
-            <ul className="space-y-2 mb-4">
-              {exportGateConditions.map((c) => (
-                <li key={c.id} className="flex items-start gap-2 text-sm">
-                  <span className={`mt-0.5 flex-shrink-0 ${c.passed ? 'text-green-400' : 'text-red-400'}`}>
-                    {c.passed ? '✓' : '✗'}
-                  </span>
-                  <span className={c.passed ? 'text-davy-gray' : 'text-seasalt'}>
-                    <span className="font-mono text-xs text-davy-gray/60 mr-1">{c.id}</span>
-                    {c.descripcion}
-                  </span>
-                </li>
-              ))}
-            </ul>
-            <button
-              onClick={() => setExportGateConditions(null)}
-              className="px-4 py-2 border border-davy-gray/30 text-davy-gray rounded text-sm hover:text-seasalt"
-            >
-              Cerrar
-            </button>
-          </section>
-        )}
+        {exportGateConditions && (() => {
+          const hardFailed = exportGateConditions.some((c) => !c.passed && !c.soft);
+          const c4Condition = exportGateConditions.find((c) => c.id === 'C4');
+          const c4Failed = c4Condition && !c4Condition.passed;
+          const canExport = !hardFailed && (!c4Failed || c4Ack);
+          return (
+            <section className={`bg-space-cadet rounded-lg border-2 p-6 ${hardFailed ? 'border-red-500/50' : 'border-amber-500/50'}`}>
+              <h2 className={`font-semibold mb-1 ${hardFailed ? 'text-red-400' : 'text-amber-400'}`}>
+                Requisitos para exportar
+              </h2>
+              <p className="text-davy-gray text-sm mb-4">
+                {hardFailed
+                  ? 'El proyecto debe cumplir las condiciones obligatorias antes de poder exportarse.'
+                  : 'Las condiciones obligatorias se cumplen. Revisa las recomendaciones antes de exportar.'}
+              </p>
+              <ul className="space-y-2 mb-4">
+                {exportGateConditions.map((c) => (
+                  <li key={c.id} className="flex items-start gap-2 text-sm">
+                    <span className={`mt-0.5 flex-shrink-0 ${
+                      c.passed ? 'text-green-400' : (c.soft ? 'text-amber-400' : 'text-red-400')
+                    }`}>
+                      {c.passed ? '✓' : (c.soft ? '⚠' : '✗')}
+                    </span>
+                    <span className={c.passed ? 'text-davy-gray' : 'text-seasalt'}>
+                      <span className="font-mono text-xs text-davy-gray/60 mr-1">{c.id}</span>
+                      {c.descripcion}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              {c4Failed && !hardFailed && (
+                <div className="bg-amber-500/10 border border-amber-500/40 rounded p-4 mb-4">
+                  <p className="text-amber-400 text-sm mb-2">
+                    El operador puede exportar asumiendo la responsabilidad editorial.
+                  </p>
+                  <label className="flex items-center gap-2 text-sm text-seasalt cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={c4Ack}
+                      onChange={(e) => setC4Ack(e.target.checked)}
+                      className="accent-amber-brand"
+                    />
+                    Entiendo y confirmo la exportacion sin score suficiente
+                  </label>
+                </div>
+              )}
+              <div className="flex gap-3">
+                {canExport && (
+                  <button
+                    onClick={() => {
+                      setExportGateConditions(null);
+                      handlePipelineAction('advance');
+                    }}
+                    disabled={actionLoading}
+                    className="px-4 py-2 bg-amber-brand text-oxford-blue rounded text-sm font-bold hover:bg-amber-brand/90 disabled:opacity-50"
+                  >
+                    {actionLoading ? 'Avanzando...' : 'Exportar'}
+                  </button>
+                )}
+                <button
+                  onClick={() => { setExportGateConditions(null); setC4Ack(false); }}
+                  className="px-4 py-2 border border-davy-gray/30 text-davy-gray rounded text-sm hover:text-seasalt"
+                >
+                  Cerrar
+                </button>
+              </div>
+            </section>
+          );
+        })()}
 
         {/* ── Info del Project ── */}
         <section className="bg-space-cadet rounded-lg border border-davy-gray/20 p-6">
