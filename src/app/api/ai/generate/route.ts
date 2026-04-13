@@ -45,7 +45,7 @@ function validateBody(body: unknown): body is GenerateRequest {
     typeof b.tool === 'string' &&
     typeof b.userMessage === 'string' &&
     b.userMessage.length > 0 &&
-    b.userMessage.length <= 10000
+    b.userMessage.length <= 120000
   );
 }
 
@@ -70,7 +70,7 @@ export async function POST(request: NextRequest) {
     if (!validateBody(body)) {
       return NextResponse.json(
         {
-          error: 'Campos requeridos: tool, userMessage (max 10.000 chars)',
+          error: 'Campos requeridos: tool, userMessage (max 120.000 chars)',
         },
         { status: 400 }
       );
