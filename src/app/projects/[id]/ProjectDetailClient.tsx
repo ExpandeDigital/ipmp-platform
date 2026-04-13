@@ -761,6 +761,9 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
 
   // Traspaso
   const [showTraspaso, setShowTraspaso] = useState(false);
+  const [exportGateConditions, setExportGateConditions] = useState<
+    Array<{ id: string; passed: boolean; descripcion: string }> | null
+  >(null);
   const [tenantsList, setTenantsList] = useState<TenantOption[]>([]);
   const [templatesList, setTemplatesList] = useState<TemplateOption[]>([]);
   const [traspasoTenant, setTraspasoTenant] = useState('');
@@ -1030,6 +1033,10 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
         if (json.code === 'TRASPASO_REQUIRED') {
           setShowTraspaso(true);
           loadConfig();
+          return;
+        }
+        if (json.code === 'EXPORT_GATE_FAILED') {
+          setExportGateConditions(json.conditions);
           return;
         }
         throw new Error(json.error);
@@ -2828,6 +2835,37 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
 
               {traspasoError && <p className="text-red-400 text-sm">{traspasoError}</p>}
             </div>
+          </section>
+        )}
+
+        {/* ── Chunk 18A: Export Gate — condiciones fallidas ── */}
+        {exportGateConditions && (
+          <section className="bg-space-cadet rounded-lg border-2 border-red-500/50 p-6">
+            <h2 className="text-red-400 font-semibold mb-1">
+              Requisitos para exportar
+            </h2>
+            <p className="text-davy-gray text-sm mb-4">
+              El proyecto debe cumplir todas las condiciones antes de poder exportarse.
+            </p>
+            <ul className="space-y-2 mb-4">
+              {exportGateConditions.map((c) => (
+                <li key={c.id} className="flex items-start gap-2 text-sm">
+                  <span className={`mt-0.5 flex-shrink-0 ${c.passed ? 'text-green-400' : 'text-red-400'}`}>
+                    {c.passed ? '✓' : '✗'}
+                  </span>
+                  <span className={c.passed ? 'text-davy-gray' : 'text-seasalt'}>
+                    <span className="font-mono text-xs text-davy-gray/60 mr-1">{c.id}</span>
+                    {c.descripcion}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <button
+              onClick={() => setExportGateConditions(null)}
+              className="px-4 py-2 border border-davy-gray/30 text-davy-gray rounded text-sm hover:text-seasalt"
+            >
+              Cerrar
+            </button>
           </section>
         )}
 

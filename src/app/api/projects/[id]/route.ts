@@ -20,6 +20,81 @@ import { eq, like, count } from 'drizzle-orm';
 
 export const dynamic = 'force-dynamic';
 
+// ── Chunk 18A: requisitos minimos por familia para exportar ──
+const EXPORT_REQUIREMENTS: Record<string, { min_palabras: number }> = {
+  prensa:        { min_palabras: 800 },
+  opinion:       { min_palabras: 400 },
+  institucional: { min_palabras: 1000 },
+  academico:     { min_palabras: 1500 },
+};
+const EXPORT_DEFAULT_REQ = { min_palabras: 500 };
+
+interface ExportCondition {
+  id: string;
+  passed: boolean;
+  descripcion: string;
+}
+
+function evaluateExportGate(
+  templateFamily: string | null | undefined,
+  data: Record<string, unknown>
+): { passed: boolean; conditions: ExportCondition[] } {
+  const borrador = data.borrador as Record<string, unknown> | undefined;
+  const metadata = borrador?.metadata as Record<string, unknown> | undefined;
+  const pitch = data.pitch as Record<string, unknown> | undefined;
+  const validaciones = (data.validaciones_borrador as unknown[]) ?? [];
+  const definitivaId = data.validacion_borrador_definitiva_id as string | undefined;
+
+  const family = templateFamily ?? 'default';
+  const req = EXPORT_REQUIREMENTS[family] ?? EXPORT_DEFAULT_REQ;
+
+  const extension = (metadata?.extension_palabras as number) ?? 0;
+  const fuentesCitadas = (metadata?.fuentes_citadas as unknown[]) ?? [];
+  const desactualizado = borrador?.desactualizado === true;
+  const borradorFecha = borrador?.generadoEn as string | undefined;
+  const pitchFecha = pitch?.generadoEn as string | undefined;
+
+  const definitivaEntry = definitivaId
+    ? (validaciones.find(
+        (v) => (v as Record<string, unknown>).id === definitivaId
+      ) as Record<string, unknown> | undefined)
+    : undefined;
+  const scoreDefinitiva = (definitivaEntry?.puntuacion_global as number) ?? 0;
+
+  const conditions: ExportCondition[] = [
+    {
+      id: 'C1',
+      passed: extension >= req.min_palabras,
+      descripcion: `Borrador debe tener al menos ${req.min_palabras} palabras (actual: ${extension})`,
+    },
+    {
+      id: 'C2',
+      passed: fuentesCitadas.length >= 1,
+      descripcion: `Borrador debe citar al menos 1 fuente del ODF (actual: ${fuentesCitadas.length})`,
+    },
+    {
+      id: 'C3',
+      passed: !desactualizado,
+      descripcion: 'El borrador debe estar actualizado respecto a las fuentes del ODF',
+    },
+    {
+      id: 'C4',
+      passed: !!definitivaId && scoreDefinitiva >= 3.5,
+      descripcion: `Debe existir una validacion definitiva con score >= 3.5 (actual: ${definitivaId ? scoreDefinitiva : 'sin definitiva'})`,
+    },
+    {
+      id: 'C5',
+      passed: !!pitchFecha && !!borradorFecha && pitchFecha > borradorFecha,
+      descripcion: 'El pitch debe haberse generado despues del borrador actual',
+    },
+  ];
+
+  return {
+    passed: conditions.every((c) => c.passed),
+    conditions,
+  };
+}
+
 // ── Pipeline: orden válido de estados ────────────────
 const PIPELINE_ORDER = [
   'draft',
@@ -238,6 +313,22 @@ export async function PATCH(
               {
                 error: 'Traspaso requerido: para avanzar a Producción necesitás asignar tenant y template (traspaso InvestigaPress → MetricPress)',
                 code: 'TRASPASO_REQUIRED',
+              },
+              { status: 400 }
+            );
+          }
+        }
+
+        // ── Chunk 18A: hard block para exportar sin cumplir requisitos ──
+        if (nextStatus === 'exportado') {
+          const mergedData = ((updates.data ?? project.data) ?? {}) as Record<string, unknown>;
+          const gate = evaluateExportGate(project.templateFamily, mergedData);
+          if (!gate.passed) {
+            return NextResponse.json(
+              {
+                error: 'El proyecto no cumple los requisitos minimos para exportar',
+                code: 'EXPORT_GATE_FAILED',
+                conditions: gate.conditions,
               },
               { status: 400 }
             );
