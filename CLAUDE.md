@@ -701,7 +701,7 @@ el dashboard de Vercel Blob si se necesita.
   estado vacio cuando no hay assets. Nav.tsx: link "Assets" agregado
   al array links apuntando a /admin/assets.
 
-- **17G** `[HASH]` docs(chunk17g): cierre documental Chunk 17.
+- **17G** `bc7a5fd` docs(chunk17g): cierre documental Chunk 17.
 
 Decision arquitectonica registrada: la tabla tenant_assets es una
 entidad separada de la tabla assets existente. La tabla assets
