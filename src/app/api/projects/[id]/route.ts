@@ -56,9 +56,6 @@ function evaluateExportGate(
   }
 
   const metadata = borrador?.metadata as Record<string, unknown> | undefined;
-  const pitch = data.pitch as Record<string, unknown> | undefined;
-  const validaciones = (data.validaciones_borrador as unknown[]) ?? [];
-  const definitivaId = data.validacion_borrador_definitiva_id as string | undefined;
 
   const family = templateFamily ?? 'default';
   const req = EXPORT_REQUIREMENTS[family] ?? EXPORT_DEFAULT_REQ;
@@ -66,15 +63,18 @@ function evaluateExportGate(
   const extension = (metadata?.extension_palabras as number) ?? 0;
   const fuentesCitadas = (metadata?.fuentes_citadas as unknown[]) ?? [];
   const desactualizado = borrador?.desactualizado === true;
-  const borradorFecha = borrador?.generadoEn as string | undefined;
-  const pitchFecha = pitch?.generadoEn as string | undefined;
 
-  const definitivaEntry = definitivaId
-    ? (validaciones.find(
-        (v) => (v as Record<string, unknown>).id === definitivaId
-      ) as Record<string, unknown> | undefined)
-    : undefined;
-  const scoreDefinitiva = (definitivaEntry?.puntuacion_global as number) ?? 0;
+  // Chunk 24A: C4 usa validaciones_ip en vez del validador MP
+  const validacionesIP = (data.validaciones_ip ?? []) as Array<{
+    score: number; apto_para_traspaso: boolean;
+  }>;
+  const ultimaValidacionIP = validacionesIP.length > 0
+    ? validacionesIP[validacionesIP.length - 1]
+    : null;
+  const c4Passed = (ultimaValidacionIP?.score ?? 0) >= 3.5;
+  const c4Actual = ultimaValidacionIP
+    ? ultimaValidacionIP.score.toFixed(1)
+    : 'sin validacion IP';
 
   const conditions: ExportCondition[] = [
     {
@@ -94,19 +94,8 @@ function evaluateExportGate(
     },
     {
       id: 'C4',
-      passed: !!definitivaId && scoreDefinitiva >= 3.5,
-      descripcion: `Debe existir una validacion definitiva con score >= 3.5 (actual: ${definitivaId ? scoreDefinitiva : 'sin definitiva'})`,
-    },
-    {
-      id: 'C5',
-      passed: !!pitchFecha && !!borradorFecha && pitchFecha > borradorFecha,
-      descripcion: !pitchFecha
-        ? 'El pitch no ha sido generado. Genera el pitch antes de exportar.'
-        : !borradorFecha
-        ? 'El borrador no tiene fecha de generacion registrada.'
-        : pitchFecha > borradorFecha
-        ? 'Pitch generado despues del borrador.'
-        : 'El pitch fue generado antes del borrador actual. Regenera el pitch.',
+      passed: c4Passed,
+      descripcion: `Debe existir una validacion IP con score >= 3.5 (actual: ${c4Actual})`,
     },
   ];
 
