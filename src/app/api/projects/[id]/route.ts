@@ -33,17 +33,20 @@ interface ExportCondition {
   id: string;
   passed: boolean;
   descripcion: string;
+  soft?: boolean;
 }
 
 function evaluateExportGate(
   templateFamily: string | null | undefined,
   data: Record<string, unknown>
-): { passed: boolean; conditions: ExportCondition[] } {
+): { passed: boolean; hardPassed: boolean; c4Passed: boolean; conditions: ExportCondition[] } {
   const borrador = data.borrador as Record<string, unknown> | undefined;
 
   if (!borrador) {
     return {
       passed: false,
+      hardPassed: false,
+      c4Passed: false,
       conditions: [
         {
           id: 'C0',
@@ -95,12 +98,18 @@ function evaluateExportGate(
     {
       id: 'C4',
       passed: c4Passed,
-      descripcion: `Debe existir una validacion IP con score >= 3.5 (actual: ${c4Actual})`,
+      descripcion: `Validacion IP con score >= 3.5 recomendada (actual: ${c4Actual})`,
+      soft: true,
     },
   ];
 
+  const hardConditions = conditions.filter((c) => !c.soft);
+  const hardPassed = hardConditions.every((c) => c.passed);
+
   return {
-    passed: conditions.every((c) => c.passed),
+    passed: hardPassed && c4Passed,
+    hardPassed,
+    c4Passed,
     conditions,
   };
 }
@@ -213,6 +222,8 @@ interface PatchBody {
   tenantSlug?: string;
   templateSlug?: string;
   brandVariant?: string;
+  // Soft gate C4: operador confirma exportar sin score suficiente
+  c4Acknowledged?: boolean;
 }
 
 export async function PATCH(
@@ -347,7 +358,9 @@ export async function PATCH(
         if (nextStatus === 'exportado') {
           const mergedData = ((updates.data ?? project.data) ?? {}) as Record<string, unknown>;
           const gate = evaluateExportGate(project.templateFamily, mergedData);
-          if (!gate.passed) {
+
+          // C1-C3 son hard blocks — siempre bloquean
+          if (!gate.hardPassed) {
             return NextResponse.json(
               {
                 error: 'El proyecto no cumple los requisitos minimos para exportar',
@@ -356,6 +369,24 @@ export async function PATCH(
               },
               { status: 400 }
             );
+          }
+
+          // C4 es soft gate — bloquea solo si no fue acknowledged
+          if (!gate.c4Passed) {
+            if (body.c4Acknowledged === true) {
+              console.warn(
+                `[PATCH /api/projects/${id}] Export con C4 acknowledged — score IP insuficiente, operador confirmo`
+              );
+            } else {
+              return NextResponse.json(
+                {
+                  error: 'Validacion IP con score insuficiente. Confirma para exportar.',
+                  code: 'C4_ACK_REQUIRED',
+                  conditions: gate.conditions,
+                },
+                { status: 400 }
+              );
+            }
           }
         }
 
