@@ -730,32 +730,231 @@ desde el dashboard de Vercel Blob. Mismo contrato best-effort del
 Chunk 15, no se introduce logica de rollback porque la complejidad
 no esta justificada para el volumen actual.
 
-### Chunk 18+ — Futuros (sin orden definitivo)
+### Chunk 18 — Flujo canonico IPMP y gates de pipeline [COMPLETADO 13 abril 2026]
 
-- **18A — Gate de exportacion por completitud del genero** (PRIORIDAD 1):
-  Antes de avanzar a fase exportado, verificar contra parametros del
-  template: (1) extension_palabras >= minimo del template,
-  (2) fuentes_citadas.length >= 1, (3) borrador.desactualizado === false,
-  (4) validacion definitiva con score >= umbral del template,
-  (5) pitch.generadoEn > borrador.generadoEn. Hard block con lista
-  de condiciones faltantes — no soft gate. El exportador del Chunk 13B
-  empaqueta estado, no producto terminado. Este gate cierra esa brecha.
+- **18A** `28ebf10` feat(chunk18a): gate de exportacion por
+  completitud del genero. Hard block antes de avanzar a exportado.
+  Cinco condiciones verificadas contra parametros del template:
+  C1 extension_palabras >= minimo por familia, C2 fuentes_citadas
+  >= 1, C3 borrador no desactualizado, C4 validacion definitiva
+  score >= 3.5, C5 pitch posterior al borrador. Constante
+  EXPORT_REQUIREMENTS por familia (prensa 800, opinion 400,
+  institucional 1000, academico 1500). Panel UI con check/X
+  por condicion, boton Cerrar.
 
-- **18B — Documento de referencia maestro** (PRIORIDAD 2):
-  Mecanismo para designar una fuente del ODF con archivo adjunto como
-  el documento que alimenta el regenerador de borrador y el constructor
-  de pitch. El handler extrae texto del blob (docx/pdf -> texto plano)
-  e inyecta como contexto prioritario antes del borrador. Resuelve el
-  loop: operador genera borrador [VERIFICAR] -> subsana verificaciones
-  en herramienta externa -> sube documento corregido al ODF -> lo
-  designa como referencia maestro -> regenera borrador con ese contenido
-  como base -> pitch construido desde borrador real -> gate 18A pasa.
+- **18A-fix** `74bd959` feat(chunk18a-fix): gate bloquea
+  correctamente con borrador null. Guard C0 al inicio de
+  evaluateExportGate: si data.borrador es null, retorna
+  passed: false con condicion C0 descriptiva sin evaluar C1-C5.
+  C5 con descripcion condicional explicita para pitch null,
+  borrador sin fecha, pitch anterior, pitch posterior.
 
-- **Bitacora de Pesquisa Externa con trazabilidad de hallazgos por
-  motor**: workflow externo documentado en 14C. Feature diferida:
-  registrar cada exportacion con que motor se uso, que hallazgos
-  se promovieron al ODF y cuales se descartaron. Implementar cuando
-  la plataforma se abra a operadores externos.
+- **18B** `c8a81d6` feat(chunk18b): generador borrador IP en
+  fase pesquisa con extraccion de archivos ODF. Nuevo endpoint
+  POST /api/fuentes/extract-content (mammoth para docx,
+  pdf-parse para pdf, utf-8 para txt, best-effort, trunca a
+  12000 chars). Nuevo builder buildGeneradorBorradorIPPrompt()
+  en prompts.ts: modo diagnostico (600-900 palabras, [VERIFICAR])
+  vs modo evidencia (1500-2500 palabras, cita fuentes por nombre),
+  deteccion automatica segun fuentesConContenido.length.
+  Nueva tool generador_borrador_ip en ToolName, IP_PROMPT_BUILDERS
+  y VALID_TOOLS. Tab Borrador IP en PHASE_CONFIG.pesquisa con
+  handler handleGenerateBorradorIP: extrae archivos ODF en paso 1,
+  genera en paso 2, guarda en data.borrador_ip (separado de
+  data.borrador MP) en paso 3.
+
+- **18C** `b3fafea` feat(chunk18c): gate borrador IP requerido,
+  MP consume IP, pitch movido post-visual. Tres cambios:
+  (A) Hard block BORRADOR_IP_REQUIRED en route.ts antes de
+  TRASPASO_REQUIRED: no se puede avanzar a produccion sin
+  data.borrador_ip. (B) handleGenerateBorrador (MP) inyecta
+  data.borrador_ip al inicio del userMessage como contexto
+  prioritario con instruccion de usarlo como base y fuente de
+  verdad, aplicando genero/voz/estructura del template sobre el.
+  (C) Tab pitch movido de PHASE_CONFIG.produccion a
+  PHASE_CONFIG.visual, despues del Generador de Prompt Visual.
+
+- **18G** `[HASH]` docs(chunk18g): cierre documental Chunk 18.
+
+Decision arquitectonica registrada: el flujo canonico IPMP
+queda establecido en el Chunk 18 como cadena unidireccional
+de artefactos con gates obligatorios en cada transicion:
+
+  hipotesis elegida
+    → fuentes ODF con archivos adjuntos
+    → borrador IP (generado por la plataforma desde los archivos)
+    → [gate BORRADOR_IP_REQUIRED]
+    → traspaso: operador elige marca + genero
+    → [gate TRASPASO_REQUIRED]
+    → borrador MP (toma IP como base, aplica genero y marca)
+    → validacion definitiva
+    → aprobado
+    → prompt visual + pitch
+    → [gate EXPORT_GATE_FAILED: 5 condiciones]
+    → exportado: ZIP con borrador.md + pitch.md generados
+      por la plataforma con tratamiento periodistico real
+
+Cada artefacto tiene un consumidor rio abajo, nunca rio arriba.
+El operador decide cuando generar cada artefacto y firma cada
+transicion. La plataforma asiste, no automatiza.
+
+El Generador de Borrador IP es el nucleo del producto: lee el
+contenido de los archivos adjuntos del ODF (docx/pdf/txt via
+extract-content), genera el documento de investigacion en modo
+evidencia cuando hay archivos, en modo diagnostico cuando no hay.
+El modo diagnostico es el estado correcto cuando el expediente
+esta incompleto — no un error. El borrador MP toma ese documento
+y aplica el tratamiento periodistico del genero elegido en el
+traspaso. La plataforma hace internamente lo que antes requeria
+herramientas externas (Cowork/Opus).
+
+La separacion InvestigaPress/MetricPress queda operativamente
+completa: IP produce el periodismo puro sin marca, MP produce
+el insumo final con marca y genero. El traspaso es el momento
+de la decision editorial, no de la creacion.
+
+### Chunk 19+ — Futuros (sin orden definitivo)
+
+- Validador de Tono accesible en fase pesquisa pre-traspaso:
+  el operador obtiene score ejecutivo del borrador IP antes
+  de decidir el traspaso. Hoy el validador vive solo en
+  revision (MetricPress).
+
+- Bloqueo del Validador de Borrador cuando no existe borrador
+  interno: hoy el validador acepta cualquier texto pegado,
+  incluyendo evaluaciones externas que no son el borrador.
+  Agregar verificacion de que texto_analizado corresponde
+  al borrador activo del proyecto.
+
+- Descripciones de template en modal de traspaso: el operador
+  no tiene guia para elegir el genero correcto. Una linea
+  descriptiva por template (para que tipo de pieza aplica,
+  extension esperada, audiencia) reduce el error de asignacion.
+
+- thesis subordinada visualmente a hipotesis_elegida: desde
+  que se elige una hipotesis, thesis es funcionalmente obsoleta
+  pero permanece visible con igual peso. Subordinarla con
+  jerarquia visual clara (tesis original → hipotesis elegida).
+
+- data.borrador.borrador → renombrar a data.borrador.contenido:
+  el nesting actual (data.borrador.borrador.titulo) es un
+  accidente de implementacion. Deuda tecnica documentada desde
+  la auditoria del Chunk 17.
+
+- Badge en UI cuando pitch.generadoEn < borrador.generadoEn:
+  indicador visible cuando el pitch es anterior al borrador
+  actual. El gate C5 bloquea el export pero no hay indicador
+  proactivo durante el trabajo.
+
+- Bitacora de Pesquisa Externa con trazabilidad de hallazgos
+  por motor: diferida a cuando la plataforma se abra a
+  operadores externos.
+
+## Hallazgos de validacion — Chunk 18 (13 abril 2026)
+
+Chunk 18 (Gate de Exportacion + Borrador IP + Correcciones de Flujo)
+shipped en cuatro sub-chunks ejecutados en una sola sesion de trabajo.
+El chunk cierra el gap arquitectonico central identificado en la
+auditoria del Chunk 17: el exportador del Chunk 13B era un exportador
+de estado, no de producto terminado. Cinco hallazgos emergieron.
+
+### a) El exportador era de estado, no de producto — ahora hay gate
+
+Antes del Chunk 18A, el pipeline permitia avanzar a fase exportado
+sin verificar si el contenido cumplia los estandares minimos del
+genero elegido. El unico hard block era TRASPASO_REQUIRED en
+pesquisa -> produccion. El gate de exportacion EXPORT_GATE_FAILED
+introduce cinco condiciones verificadas contra parametros del template
+(extension minima, fuentes citadas, borrador actualizado, validacion
+definitiva, pitch posterior al borrador). Solo cuando las cinco
+condiciones se cumplen el ZIP representa un insumo periodistico
+terminado. El fix 18A-fix agrego un guard C0 para el caso de
+borrador null (proyecto que llego a exportado sin generar borrador),
+cerrando un edge case donde las cinco condiciones se evaluaban sobre
+undefined y pasaban silenciosamente.
+
+### b) Borrador IP resuelve la dependencia Cowork sin automatizar
+
+El Generador de Borrador IP (18B) resuelve el problema de que el
+operador necesitaba salir de IPMP para generar el documento de
+investigacion en Claude.ai MAX. Ahora el borrador IP se genera
+dentro de la plataforma en fase pesquisa, consumiendo las fuentes
+del ODF incluyendo el texto extraido de archivos adjuntos (docx,
+pdf, texto plano via el endpoint /api/fuentes/extract-content).
+El borrador IP opera en dos modos (diagnostico vs evidencia
+disponible) heredados del prompt del Chunk 12D. La extraccion de
+contenido es best-effort: si falla, el borrador se genera sin ese
+contenido, coherente con el principio de no bloquear el flujo
+editorial por fallos de infraestructura.
+
+### c) Seis puntos de friccion de la auditoria del Chunk 17 — estado de resolucion
+
+De los seis solapamientos detectados en la auditoria de
+METRICPRESS-AC-2026-0001 (Chunk 17 hallazgo c):
+
+- CRITICO-1 (pitch anterior al borrador): resuelto por el gate C5
+  del 18A y por el movimiento del pitch a fase visual en 18C-C.
+  El pitch ahora se genera despues del borrador aprobado por
+  construccion del pipeline.
+- CRITICO-2 (thesis vs hipotesis_elegida): parcialmente mitigado.
+  La thesis sigue visible pero el borrador IP y MP se construyen
+  desde hipotesis_elegida. Resolucion completa diferida a Chunk 19+.
+- GRAVE-1 (validador evalua texto externo): no resuelto en Chunk 18.
+  Diferido a Chunk 19+ como feature de binding entre validador y
+  borrador activo.
+- GRAVE-2 (data.borrador.borrador nesting): no resuelto en Chunk 18.
+  El nesting se mantiene por retrocompat con proyectos existentes.
+  Diferido a Chunk 19+.
+- MODERADO-1 (fuentes_citadas vacia): parcialmente mitigado por el
+  gate C2 que requiere al menos una fuente citada para exportar.
+- MODERADO-2 (pitch.pitch vs pitch.texto_completo): no resuelto.
+  Diferido a Chunk 19+.
+
+### d) El traspaso como decision editorial, no administrativa
+
+El gate BORRADOR_IP_REQUIRED (18C-A) refuerza que el traspaso de
+IP a MP es una decision editorial informada: el operador debe haber
+generado el documento de investigacion antes de asignar tenant y
+template. La secuencia forzada es: investigar (pesquisa con ODF) ->
+documentar (borrador IP) -> decidir destino editorial (traspaso) ->
+producir (borrador MP que consume el IP como contexto). Esta cadena
+unidireccional extiende el principio del Chunk 12: cada artefacto
+tiene un consumidor rio abajo, nunca rio arriba.
+
+### e) Pitch movido a post-visual por coherencia de dependencias
+
+El Constructor de Pitch se movio de fase produccion a fase visual
+(18C-C) porque su prompt consume el borrador aprobado como base
+canonica. En produccion, el borrador aun no esta aprobado — puede
+cambiar en revision. En visual, el borrador ya paso por revision y
+aprobacion, garantizando que el pitch refleja el contenido editorial
+definitivo. Este movimiento tambien resuelve CRITICO-1 de la
+auditoria: es imposible que el pitch sea anterior al borrador
+porque el pipeline fuerza la secuencia produccion -> revision ->
+aprobado -> visual (donde se genera el pitch) -> exportado.
+
+### Notas sobre la ejecucion del Chunk 18
+
+- Los cuatro sub-chunks con codigo (18A, 18A-fix, 18B, 18C) se
+  ejecutaron sin rework. El 18B fue el mas grande: nuevo endpoint,
+  nuevo prompt builder, registro en ambos registries, y UI completa
+  del tab con extraccion de archivos.
+- El endpoint /api/fuentes/extract-content usa require() para
+  pdf-parse en vez de dynamic import porque TypeScript no resuelve
+  el default export de pdf-parse via import(). Documentado con
+  eslint-disable para @typescript-eslint/no-require-imports.
+- El borrador IP y el borrador MP comparten la misma interfaz
+  BorradorData y el mismo parser parseBorradorFromRaw. Se persisten
+  en campos separados (data.borrador_ip vs data.borrador) para
+  evitar colision y preservar ambos artefactos simultaneamente.
+- La inyeccion del borrador IP en el userMessage del borrador MP
+  (18C-B) sigue el patron de contexto aditivo: se agrega al inicio
+  del mensaje con instruccion explicita de usarlo como base, sin
+  modificar la estructura del prompt del sistema.
+- El pipeline validado end-to-end tiene 11 pasos: crear proyecto ->
+  generar hipotesis -> elegir hipotesis -> cargar fuentes ODF ->
+  generar borrador IP -> traspaso -> generar borrador MP -> validar
+  -> aprobar -> generar prompt visual + pitch -> exportar ZIP.
 
 ## Hallazgos de validacion — Chunk 17 (12 abril 2026)
 
