@@ -946,11 +946,40 @@ Gap de imagen externa resuelto: la imagen generada en
 herramientas externas (Manus, Midjourney) ahora tiene hogar
 en el pipeline via upload en tab Prompt Visual.
 
-### Chunk 21+ — Futuros (sin orden definitivo)
+### Chunk 21 — Dashboard de consumo por tenant [COMPLETADO 13 abril 2026]
 
-- Dashboard de consumo por tenant (Chunk 21): endpoint
-  /api/admin/consumo agrupado por tenant/tool/periodo,
-  UI en /admin/consumo con tabla tokens y costo estimado.
+- **21A** `e24e82c` feat(chunk21a): GET /api/admin/consumo endpoint
+  con filtros tenant/year/month, GROUP BY mes+tenant+tool,
+  aggregacion tokens y costo USD desde consumption_logs.
+  Auth via query param token vs ADMIN_TOKEN (mismo patron
+  que /api/admin/init). Response shape: ok, filters, summary
+  (totalInputTokens, totalOutputTokens, totalTokens,
+  totalEstimatedCost, rowCount), rows con mes/tenantId/
+  toolName/inputTokens/outputTokens/totalTokens/estimatedCost.
+
+- **21B** `95063d7` feat(chunk21b): UI dashboard /admin/consumo.
+  Server component page.tsx con fetch de tenants para selector.
+  Client component ConsumoClient.tsx con tres filtros (tenant,
+  ano, mes), cuatro tarjetas de resumen, tabla de detalle con
+  7 columnas. Auth: adminToken pasado como prop desde server
+  component (mismo patron que /admin/editores y /admin/assets).
+  tenantNameMap resuelve UUID a nombre legible en la tabla.
+  Link "Consumo" agregado a Nav.tsx.
+
+- **21G** Este cierre documental.
+
+Decision arquitectonica registrada: el dashboard de consumo lee
+de consumption_logs sin modificar el contrato de trackUsage()
+(fire-and-forget). El costo USD ya estaba persistido por
+usage-tracker.ts desde el Chunk 6. El endpoint es read-only
+y no introduce writes adicionales. La auth via query param
+token es consistente con los demas endpoints /api/admin/*.
+La decision de pasar adminToken como prop desde el server
+component (en vez de crear un proxy o middleware) sigue el
+patron establecido en Chunks 10 y 17 para rutas admin
+protegidas sin sistema de login.
+
+### Chunk 22+ — Futuros (sin orden definitivo)
 
 - Filtros en listado de proyectos (Chunk 22): filtro por
   status, tenantId y busqueda por titulo. Editor elegido
@@ -1291,3 +1320,46 @@ sin acceso a la plataforma. Un editor externo puede abrir
 "Cronica narrativa — El ascenso silencioso.docx" sin contexto
 tecnico previo. El naming con genero periodistico implementa
 el Principio 4 de filantropia digital: portabilidad real.
+
+## Hallazgos de validacion — Chunk 21 (13 abril 2026)
+
+Chunk 21 (Dashboard de Consumo por Tenant) shipped en dos sub-chunks
+ejecutados en la misma sesion de trabajo del Chunk 20, sin rework.
+El endpoint lee de consumption_logs (persistencia fire-and-forget
+del Chunk 6) y la UI sigue el patron server+client de las paginas
+admin existentes. Tres hallazgos menores.
+
+### a) Trazabilidad de costos operativa desde el dia uno
+
+El campo costUsd en consumption_logs fue persistido desde el primer
+insert del Chunk 6, calculado por estimateCostUsd() en provider.ts
+con la tabla de precios de Sonnet 4 y Haiku 4.5. El dashboard del
+Chunk 21 simplemente agrega esos valores con SUM(cost_usd::numeric).
+No fue necesario recalcular ni backfill. Hallazgo operativo: la
+decision del Chunk 6 de persistir el costo estimado en cada insert
+(en vez de calcularlo al vuelo en el dashboard) resulto ser la
+decision correcta porque permite cambiar la tabla de precios en
+provider.ts sin alterar los costos historicos ya registrados.
+
+### b) Auth sin proxy ni middleware
+
+La UI del dashboard pasa adminToken como prop desde el server
+component al client component. El client lo incluye como query
+param en cada fetch a /api/admin/consumo. No hay proxy ni
+middleware ni cookie de sesion. Este patron es identico al usado
+en /admin/editores y /admin/assets. Es aceptable mientras el
+unico operador sea el titular de la plataforma. Cuando se abra
+a operadores externos (Chunk 28+), todas las rutas admin
+necesitaran migrarse a un sistema de auth real con sesion.
+
+### c) Resolucion de tenantId a nombre legible
+
+El endpoint devuelve tenantId (UUID) en cada row porque el
+GROUP BY opera sobre la columna raw. La UI resuelve el UUID
+a nombre legible mediante un Map construido en el client
+desde la lista de tenants pasada por el server component.
+Alternativa descartada: hacer JOIN con tenants en el endpoint.
+Razon: el JOIN complicaria el GROUP BY y la lista de tenants
+ya esta disponible en el client para los selectores de filtro.
+La resolucion client-side con Map es O(1) por row y no requiere
+infraestructura adicional.
