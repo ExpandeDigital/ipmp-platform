@@ -281,6 +281,19 @@ interface ImagenVisualData {
   subidaEn: string;
 }
 
+// Chunk 23A: entrada del historial del Validador IP
+interface ValidacionIPEntry {
+  generadoEn: string;
+  score: number;
+  apto_para_traspaso: boolean;
+  dimensiones: Array<{
+    nombre: string;
+    puntuacion: number;
+    observacion: string;
+  }>;
+  recomendaciones: string[];
+}
+
 interface TenantOption {
   slug: string;
   name: string;
@@ -465,11 +478,10 @@ const PHASE_CONFIG: Record<string, PhaseConfig> = {
   visual: {
     tabs: [
       { key: 'prompt_visual', label: '🎨 Generador de Prompt Visual', subtitle: 'Crea un prompt estructurado para generar la imagen editorial' },
-      { key: 'pitch', label: '📨 Constructor de Pitch', subtitle: 'Transforma el borrador aprobado en un pitch para el editor destino' },
     ],
   },
   revision: {
-    tabs: [{ key: 'validador', label: '✅ Validador de Tono del Borrador', subtitle: 'Audita tono, precision y alineacion de marca del borrador' }],
+    tabs: [{ key: 'validador', label: '✅ Revision del Borrador', subtitle: 'El borrador fue validado en fase Pesquisa (Validador IP). Revisa el score antes de avanzar a Aprobado.' }],
   },
   aprobado: {
     tabs: [
@@ -833,6 +845,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
   const [traspasoBrandVariant, setTraspasoBrandVariant] = useState('');
   const [traspasoLoading, setTraspasoLoading] = useState(false);
   const [traspasoError, setTraspasoError] = useState<string | null>(null);
+  const [traspasoScoreAck, setTraspasoScoreAck] = useState(false);
 
   // Generador de Hipótesis
   const [hipTema, setHipTema] = useState('');
@@ -842,20 +855,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
   const [hipError, setHipError] = useState<string | null>(null);
   const [eligiendo, setEligiendo] = useState<number | null>(null);
 
-  // Constructor de Pitch
-  const [pitchMedio, setPitchMedio] = useState('');
-  const [construyendo, setConstruyendo] = useState(false);
-  const [pitchError, setPitchError] = useState<string | null>(null);
-
-  // Chunk 11B — Panel de sugerencias de editores
-  const [tierObjetivo, setTierObjetivo] = useState<number>(1);
-  const [sugerencias, setSugerencias] = useState<EditorSugerido[]>([]);
-  const [sugerenciasMeta, setSugerenciasMeta] = useState<SugerenciasMeta | null>(null);
-  const [sugerenciasLoading, setSugerenciasLoading] = useState(false);
-  const [sugerenciasError, setSugerenciasError] = useState<string | null>(null);
-  const [editorElegidoId, setEditorElegidoId] = useState<string | null>(null);
-  const [editorElegidoNombre, setEditorElegidoNombre] = useState<string | null>(null);
-  const [editorElegidoMedio, setEditorElegidoMedio] = useState<string | null>(null);
+  // Chunk 24C: estados del Constructor de Pitch y panel de editores eliminados
 
   // Radar Editorial
   const [radarMedio, setRadarMedio] = useState('');
@@ -868,9 +868,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
   const [expandedRadar, setExpandedRadar] = useState<string | null>(null);
 
   // Validador de Tono del Borrador (fase revision)
-  const [borradorTexto, setBorradorTexto] = useState('');
-  const [validandoBorrador, setValidandoBorrador] = useState(false);
-  const [borradorError, setBorradorError] = useState<string | null>(null);
+  // Chunk 24B: estados del Validador de Tono MP eliminados (borradorTexto, validandoBorrador, borradorError)
   const [expandedBorrador, setExpandedBorrador] = useState<string | null>(null);
 
   // Validador de Tono del Borrador IP (fase pesquisa) — Chunk 19C
@@ -884,6 +882,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
     recomendaciones: string[];
     apto_para_traspaso: boolean;
   } | null>(null);
+  const [showHistorialIP, setShowHistorialIP] = useState(false);
 
   // Validador de Hipótesis y Pista (VHP) — Chunk 7B
   const [vhpTipoLead, setVhpTipoLead] = useState<LeadTipo>('documento');
@@ -989,31 +988,6 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project?.id]);
 
-  // Chunk 19B: prefill del textarea del Validador de Tono del Borrador
-  // desde el borrador activo (MP prioritario, luego IP). Solo al montar
-  // o cambiar project, si el textarea local esta vacio.
-  useEffect(() => {
-    if (!project) return;
-    if (borradorTexto.trim()) return; // no sobreescribir edicion manual
-    const dataObj = (project.data ?? {}) as Record<string, unknown>;
-    const borradorMPRaw = dataObj.borrador as Record<string, unknown> | undefined;
-    if (borradorMPRaw) {
-      const parsed = parseBorradorFromRaw(borradorMPRaw);
-      if (parsed) {
-        setBorradorTexto(buildBorradorTextoPlano(parsed));
-        return;
-      }
-    }
-    const borradorIPRaw = dataObj.borrador_ip as Record<string, unknown> | undefined;
-    if (borradorIPRaw) {
-      const parsed = parseBorradorFromRaw(borradorIPRaw);
-      if (parsed) {
-        setBorradorTexto(buildBorradorTextoPlano(parsed));
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project?.id]);
-
   // Chunk 19C: prefill del textarea del Validador IP desde data.borrador_ip
   useEffect(() => {
     if (!project) return;
@@ -1028,58 +1002,6 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project?.id]);
-
-  // Chunk 11B: hidratacion del tierObjetivo desde data.pitch.tierObjetivo
-  // al cargar un project nuevo. Depende solo de project?.id para que no se
-  // dispare en refetches del mismo project (que resetearian el tier cada
-  // vez que el operador lo cambia manualmente).
-  useEffect(() => {
-    const pitchData = (project?.data as { pitch?: PitchData })?.pitch;
-    if (pitchData?.tierObjetivo && typeof pitchData.tierObjetivo === 'number') {
-      setTierObjetivo(pitchData.tierObjetivo);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project?.id]);
-
-  // Chunk 11B: fetch automatico de sugerencias de editores cuando cambian
-  // tenant, templateFamily o tier. Debounce de 300ms para absorber cambios
-  // rapidos del dropdown de tier.
-  useEffect(() => {
-    if (!project?.hasTenant || !project.tenantSlug || !project.templateFamily) {
-      setSugerencias([]);
-      setSugerenciasMeta(null);
-      setSugerenciasError(null);
-      return;
-    }
-
-    const tenantSlug = project.tenantSlug;
-    const templateFamily = project.templateFamily;
-
-    const timer = setTimeout(async () => {
-      setSugerenciasLoading(true);
-      setSugerenciasError(null);
-      try {
-        const params = new URLSearchParams({
-          tenantSlug,
-          tier: String(tierObjetivo),
-          templateFamily,
-        });
-        const res = await fetch(`/api/editores/sugerencias?${params.toString()}`);
-        const json = await res.json();
-        if (!res.ok) throw new Error(json.error || 'Error cargando sugerencias');
-        setSugerencias(json.sugerencias || []);
-        setSugerenciasMeta(json.meta || null);
-      } catch (err) {
-        setSugerenciasError(err instanceof Error ? err.message : 'Error desconocido');
-        setSugerencias([]);
-        setSugerenciasMeta(null);
-      } finally {
-        setSugerenciasLoading(false);
-      }
-    }, 300);
-
-    return () => clearTimeout(timer);
-  }, [project?.hasTenant, project?.tenantSlug, project?.templateFamily, tierObjetivo]);
 
   // ── Cargar config para traspaso ──
   async function loadConfig() {
@@ -1140,6 +1062,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
     }
 
     if (action === 'advance' && project.status === 'pesquisa' && !project.hasTenant) {
+      setTraspasoScoreAck(false);
       setShowTraspaso(true);
       loadConfig();
       return;
@@ -1155,6 +1078,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
       const json = await res.json();
       if (!res.ok) {
         if (json.code === 'TRASPASO_REQUIRED') {
+          setTraspasoScoreAck(false);
           setShowTraspaso(true);
           loadConfig();
           return;
@@ -1798,66 +1722,6 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
   }
 
   // ── Validar borrador propio (fase revision) ──
-  async function handleValidarBorrador() {
-    if (!project || !borradorTexto.trim()) return;
-    setValidandoBorrador(true);
-    setBorradorError(null);
-
-    try {
-      const genBody: Record<string, unknown> = {
-        tool: 'validador_tono',
-        userMessage: borradorTexto.trim(),
-        projectId: project.id,
-      };
-      if (project.hasTenant && project.tenantSlug && project.templateSlug) {
-        genBody.tenantSlug = project.tenantSlug;
-        genBody.templateSlug = project.templateSlug;
-      }
-
-      const res = await fetch('/api/ai/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(genBody),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Error validando borrador');
-
-      const result = json.result ?? {};
-      const entry: ValidacionBorradorEntry = {
-        id: genId(),
-        texto_analizado: borradorTexto.trim().slice(0, 300),
-        evaluacion: parseValidacionDimensions(result.evaluacion),
-        puntuacion_global: Number(result.puntuacion_global ?? 0),
-        veredicto: String(result.veredicto ?? 'requiere_revision'),
-        resumen: String(result.resumen ?? ''),
-        validado_en: new Date().toISOString(),
-      };
-
-      const currentRaw = project.data?.validaciones_borrador;
-      const current: ValidacionBorradorEntry[] = Array.isArray(currentRaw)
-        ? (currentRaw as ValidacionBorradorEntry[])
-        : [];
-      const next = [...current, entry];
-
-      const patchRes = await fetch(`/api/projects/${project.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data: { validaciones_borrador: next } }),
-      });
-      if (!patchRes.ok) {
-        const pj = await patchRes.json();
-        throw new Error(pj.error || 'Error guardando validación');
-      }
-
-      setBorradorTexto('');
-      await fetchProject();
-    } catch (err) {
-      setBorradorError(err instanceof Error ? err.message : 'Error desconocido');
-    } finally {
-      setValidandoBorrador(false);
-    }
-  }
-
   // ── Chunk 19C: Validar borrador IP (fase pesquisa) ──
   async function handleValidarBorradorIP() {
     if (!project) return;
@@ -1884,22 +1748,52 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
       if (!res.ok) throw new Error(json.error || 'Error validando borrador IP');
 
       const result = json.result ?? {};
+      const parsedScore = Number(result.score ?? 0);
+      const parsedDimensiones = Array.isArray(result.dimensiones)
+        ? (result.dimensiones as { nombre: string; score: number; observacion: string }[]).map(
+            (d) => ({
+              nombre: String(d.nombre ?? ''),
+              puntuacion: Number(d.score ?? 0),
+              observacion: String(d.observacion ?? ''),
+            })
+          )
+        : [];
+      const parsedRecomendaciones = Array.isArray(result.recomendaciones)
+        ? (result.recomendaciones as unknown[]).map(String)
+        : [];
+      const parsedApto = Boolean(result.apto_para_traspaso ?? false);
+
+      // Chunk 23A: persistir en data.validaciones_ip[] (fire-and-forget)
+      const nuevaEntrada: ValidacionIPEntry = {
+        generadoEn: new Date().toISOString(),
+        score: parsedScore,
+        apto_para_traspaso: parsedApto,
+        dimensiones: parsedDimensiones,
+        recomendaciones: parsedRecomendaciones,
+      };
+      const existentes = ((project.data?.validaciones_ip ?? []) as ValidacionIPEntry[]);
+      const nuevoArray = [...existentes, nuevaEntrada];
+      fetch(`/api/projects/${project.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: { validaciones_ip: nuevoArray } }),
+      }).then((patchRes) => {
+        if (!patchRes.ok) console.error('[Chunk 23A] Error persistiendo validaciones_ip');
+        else fetchProject();
+      }).catch((patchErr) => {
+        console.error('[Chunk 23A] Error persistiendo validaciones_ip:', patchErr);
+      });
+
       setIpResultadoValidacion({
-        score: Number(result.score ?? 0),
+        score: parsedScore,
         resumen_ejecutivo: String(result.resumen_ejecutivo ?? ''),
-        dimensiones: Array.isArray(result.dimensiones)
-          ? (result.dimensiones as { nombre: string; score: number; observacion: string }[]).map(
-              (d) => ({
-                nombre: String(d.nombre ?? ''),
-                score: Number(d.score ?? 0),
-                observacion: String(d.observacion ?? ''),
-              })
-            )
-          : [],
-        recomendaciones: Array.isArray(result.recomendaciones)
-          ? (result.recomendaciones as unknown[]).map(String)
-          : [],
-        apto_para_traspaso: Boolean(result.apto_para_traspaso ?? false),
+        dimensiones: parsedDimensiones.map((d) => ({
+          nombre: d.nombre,
+          score: d.puntuacion,
+          observacion: d.observacion,
+        })),
+        recomendaciones: parsedRecomendaciones,
+        apto_para_traspaso: parsedApto,
       });
     } catch (err) {
       setIpValidadorError(err instanceof Error ? err.message : 'Error desconocido');
@@ -1974,142 +1868,6 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
   }
 
   // ── Construir pitch ──
-  // Chunk 11B: handler de click en una card de sugerencia.
-  // Toggle: si ya esta elegida, la deselecciona y limpia pitchMedio.
-  function handleElegirEditor(sug: EditorSugerido) {
-    const nombreCompleto = `${sug.editor.nombre} ${sug.editor.apellido}`.trim();
-    if (editorElegidoId === sug.editor.id) {
-      setEditorElegidoId(null);
-      setEditorElegidoNombre(null);
-      setEditorElegidoMedio(null);
-      setPitchMedio('');
-      return;
-    }
-    setEditorElegidoId(sug.editor.id);
-    setEditorElegidoNombre(nombreCompleto);
-    setEditorElegidoMedio(sug.editor.medio);
-    setPitchMedio(sug.editor.medio);
-  }
-
-  // Chunk 12E: refactorizado para consumir data.borrador en vez del angulo libre.
-  async function handleConstruirPitch() {
-    if (!project) return;
-
-    // Guard de borrador validado
-    const dataObj = (project.data ?? {}) as Record<string, unknown>;
-    const borradorRaw = dataObj.borrador as Record<string, unknown> | undefined;
-    if (!borradorRaw || typeof borradorRaw !== 'object') {
-      setPitchError(
-        'El pitch requiere un borrador validado. Genera y guarda el borrador antes de construir el pitch.'
-      );
-      return;
-    }
-
-    const borradorParsed = parseBorradorFromRaw(borradorRaw);
-    if (!borradorParsed || !borradorParsed.contenido.titulo) {
-      setPitchError(
-        'El borrador guardado no tiene estructura valida. Regenera el borrador antes de construir el pitch.'
-      );
-      return;
-    }
-
-    setConstruyendo(true);
-    setPitchError(null);
-
-    // Construir userMessage desde el borrador completo
-    const b = borradorParsed.contenido;
-    const m = borradorParsed.metadata;
-
-    let userMessage = `BORRADOR VALIDADO:\n`;
-    userMessage += `TITULO: ${b.titulo}\n`;
-    if (b.bajada) userMessage += `BAJADA: ${b.bajada}\n`;
-    userMessage += `\nLEAD:\n${b.lead}\n`;
-    if (b.cuerpo.length > 0) {
-      userMessage += `\nCUERPO:\n`;
-      b.cuerpo.forEach((sec) => {
-        if (sec.subtitulo) userMessage += `\n## ${sec.subtitulo}\n`;
-        sec.parrafos.forEach((p) => {
-          userMessage += `${p}\n\n`;
-        });
-      });
-    }
-    if (b.cierre) userMessage += `CIERRE:\n${b.cierre}\n`;
-
-    if (m.fuentes_citadas.length > 0) {
-      userMessage += `\nFUENTES CITADAS EN EL BORRADOR:\n`;
-      m.fuentes_citadas.forEach((f) => {
-        userMessage += `- ${f}\n`;
-      });
-    }
-    if (m.verificaciones_criticas_resueltas.length > 0) {
-      userMessage += `\nVERIFICACIONES CRITICAS RESUELTAS:\n`;
-      m.verificaciones_criticas_resueltas.forEach((v) => {
-        userMessage += `- ${v}\n`;
-      });
-    }
-    if (m.verificaciones_criticas_pendientes.length > 0) {
-      userMessage += `\nVERIFICACIONES CRITICAS PENDIENTES (el pitch debe omitirlas o marcarlas [PENDIENTE]):\n`;
-      m.verificaciones_criticas_pendientes.forEach((v) => {
-        userMessage += `- ${v}\n`;
-      });
-    }
-
-    if (pitchMedio.trim()) userMessage += `\nMEDIO DESTINO: ${pitchMedio.trim()}`;
-    if (project.thesis) userMessage += `\nTESIS DEL PROJECT: ${project.thesis}`;
-
-    try {
-      const genBody: Record<string, unknown> = {
-        tool: 'constructor_pitch',
-        userMessage,
-        projectId: project.id,
-      };
-      if (project.hasTenant && project.tenantSlug && project.templateSlug) {
-        genBody.tenantSlug = project.tenantSlug;
-        genBody.templateSlug = project.templateSlug;
-      }
-
-      const res = await fetch('/api/ai/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(genBody),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Error construyendo pitch');
-
-      const result = json.result ?? {};
-      const pitchPayload: Record<string, unknown> = {
-        pitch: result.pitch ?? {},
-        texto_completo: result.texto_completo ?? '',
-        medio_destino: result.medio_destino ?? (pitchMedio.trim() || 'General'),
-        notas_estrategicas: result.notas_estrategicas ?? '',
-        angulo_titulo: b.titulo,
-        generadoEn: new Date().toISOString(),
-      };
-
-      // Chunk 11B: persistir metadata de editor elegido y tier objetivo.
-      if (project.hasTenant) {
-        pitchPayload.tierObjetivo = tierObjetivo;
-      }
-      if (editorElegidoId && editorElegidoNombre && editorElegidoMedio) {
-        pitchPayload.editorId = editorElegidoId;
-        pitchPayload.editorNombreSnapshot = editorElegidoNombre;
-        pitchPayload.editorMedioSnapshot = editorElegidoMedio;
-      }
-
-      await fetch(`/api/projects/${project.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data: { pitch: pitchPayload } }),
-      });
-
-      await fetchProject();
-    } catch (err) {
-      setPitchError(err instanceof Error ? err.message : 'Error desconocido');
-    } finally {
-      setConstruyendo(false);
-    }
-  }
-
   // ── Generador de Prompt Visual — Chunk 14B ──
   async function handleGenerarPromptVisual() {
     if (!project) return;
@@ -3183,6 +2941,47 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
               Para avanzar a Producción, asigná la marca y el tipo de pieza.
             </p>
 
+            {/* Chunk 23C: soft gate de score IP */}
+            {(() => {
+              const valIpArr23c = ((project?.data?.validaciones_ip ?? []) as ValidacionIPEntry[]);
+              const lastScore = valIpArr23c.length > 0 ? valIpArr23c[valIpArr23c.length - 1].score : null;
+              const needsScoreAck = valIpArr23c.length === 0 || (lastScore !== null && lastScore < 3.0);
+              const borradorIpRaw23c = project?.data?.borrador_ip as Record<string, unknown> | undefined;
+              const modoIP23c = borradorIpRaw23c?.modo as string | undefined;
+              const isDiagnostico = modoIP23c === 'diagnostico';
+
+              return (
+                <>
+                  {needsScoreAck && (
+                    <div className="bg-amber-500/10 border border-amber-500/40 rounded p-4 mb-4">
+                      <p className="text-amber-400 text-sm mb-2">
+                        {valIpArr23c.length === 0
+                          ? '⚠ El borrador IP no ha sido validado. Se recomienda ejecutar el Validador IP antes de traspasar.'
+                          : `⚠ El ultimo score del Validador IP es ${lastScore!.toFixed(1)}/5.0, por debajo del minimo recomendado (3.0). Podes continuar, pero el borrador MP tendra una base debil.`
+                        }
+                      </p>
+                      <label className="flex items-center gap-2 text-sm text-seasalt cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={traspasoScoreAck}
+                          onChange={(e) => setTraspasoScoreAck(e.target.checked)}
+                          className="accent-amber-brand"
+                        />
+                        Entiendo y quiero traspasar de todas formas
+                      </label>
+                    </div>
+                  )}
+                  {isDiagnostico && (
+                    <div className="bg-blue-500/10 border border-blue-500/40 rounded p-4 mb-4">
+                      <p className="text-blue-300 text-sm">
+                        ℹ El borrador IP fue generado en modo diagnostico (ODF sin fuentes verificadas). El borrador MP tendra menos evidencia como base. Considera cargar fuentes al ODF y regenerar el borrador IP antes de traspasar.
+                      </p>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
+
             <div className="space-y-4">
               {/* Tenant */}
               <div>
@@ -3267,7 +3066,11 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
               <div className="flex gap-3">
                 <button
                   onClick={handleTraspaso}
-                  disabled={traspasoLoading || !traspasoTenant || !traspasoTemplate}
+                  disabled={traspasoLoading || !traspasoTenant || !traspasoTemplate || (() => {
+                    const vArr = ((project?.data?.validaciones_ip ?? []) as ValidacionIPEntry[]);
+                    const needsAck = vArr.length === 0 || vArr[vArr.length - 1].score < 3.0;
+                    return needsAck && !traspasoScoreAck;
+                  })()}
                   className="flex-1 py-2.5 bg-amber-brand text-oxford-blue rounded font-bold text-sm
                              hover:bg-amber-brand/90 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
@@ -4061,222 +3864,6 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
               </section>
             )}
 
-            {/* ── TAB: Constructor de Pitch (Chunk 12E: fase produccion, consume borrador) ── */}
-            {activeTool === 'pitch' && phaseConfig.tabs.some((t) => t.key === 'pitch') && (
-              <div>
-                {/* Chunk 12E: guard visual — el pitch ahora requiere un borrador validado */}
-                {(() => {
-                  const dataObj = (project?.data ?? {}) as Record<string, unknown>;
-                  const borrRaw = dataObj.borrador as Record<string, unknown> | undefined;
-                  const borrContenido = ((borrRaw as Record<string, unknown>)?.contenido ?? (borrRaw as Record<string, unknown>)?.borrador) as Record<string, unknown> | undefined;
-                  const hasBorrador = !!borrContenido && typeof borrContenido === 'object' && !!borrContenido.titulo;
-                  if (!hasBorrador) {
-                    return (
-                      <div className="bg-red-500/10 border border-red-500/40 rounded p-4 mb-4">
-                        <p className="text-red-400 text-sm font-medium mb-1">
-                          El Constructor de Pitch requiere un borrador validado
-                        </p>
-                        <p className="text-davy-gray text-xs">
-                          Genera el borrador en el tab Generador de Borrador antes de construir
-                          el pitch. El pitch se construye a partir del borrador verificado, no
-                          desde un angulo libre.
-                        </p>
-                      </div>
-                    );
-                  }
-                  return (
-                    <div className="bg-green-500/10 border border-green-500/30 rounded p-3 mb-4">
-                      <p className="text-green-400 text-xs">
-                        Borrador disponible: <span className="font-medium text-seasalt">{String(borrContenido.titulo ?? '')}</span>
-                      </p>
-                    </div>
-                  );
-                })()}
-                {(() => {
-                  const pitchFecha = (project?.data as Record<string, unknown> | undefined)?.pitch
-                    ? new Date(String(((project?.data as Record<string, unknown>).pitch as Record<string, unknown>)?.generadoEn ?? ''))
-                    : null;
-                  const borradorFecha = (project?.data as Record<string, unknown> | undefined)?.borrador
-                    ? new Date(String(((project?.data as Record<string, unknown>).borrador as Record<string, unknown>)?.generadoEn ?? ''))
-                    : null;
-                  const pitchEsAnterior = pitchFecha && borradorFecha
-                    && !isNaN(pitchFecha.getTime()) && !isNaN(borradorFecha.getTime())
-                    && pitchFecha < borradorFecha;
-                  if (!pitchEsAnterior) return null;
-                  return (
-                    <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 mb-4">
-                      <span>⚠️</span>
-                      <span>
-                        Este pitch fue generado antes del borrador actual. El gate de
-                        exportación lo va a bloquear. Regenerá el pitch para que refleje
-                        el contenido definitivo.
-                      </span>
-                    </div>
-                  );
-                })()}
-                <p className="text-davy-gray text-sm mb-4">
-                  Construye un pitch editorial basado en el borrador validado. El pitch
-                  refleja exclusivamente lo documentado en el borrador y sus fuentes.
-                </p>
-                <div className="space-y-3">
-
-                  {/* Chunk 11B: Tier objetivo + panel de sugerencias */}
-                  {project.hasTenant && project.templateFamily ? (
-                    <>
-                      <div>
-                        <label className="block text-xs text-davy-gray mb-1">Tier objetivo del pitch</label>
-                        <select
-                          value={tierObjetivo}
-                          onChange={(e) => setTierObjetivo(parseInt(e.target.value, 10))}
-                          className="w-full bg-oxford-blue border border-davy-gray/30 rounded px-4 py-2
-                                     text-seasalt focus:outline-none focus:border-amber-brand/50 text-sm"
-                        >
-                          <option value={1}>Tier 1 — Nacional/Internacional</option>
-                          <option value={2}>Tier 2 — Regional</option>
-                          <option value={3}>Tier 3 — Sectorial</option>
-                          <option value={4}>Tier 4 — Nicho/Comunitario</option>
-                        </select>
-                        <p className="text-xs text-davy-gray/70 mt-1">
-                          Filtra editores con tier igual o más exigente que el objetivo.
-                        </p>
-                      </div>
-
-                      <div className="bg-oxford-blue/50 border border-davy-gray/20 rounded p-3">
-                        <div className="flex items-center justify-between mb-2">
-                          <h4 className="text-xs font-semibold text-seasalt uppercase tracking-wide">
-                            Editores sugeridos
-                          </h4>
-                          {sugerenciasMeta && (
-                            <span className="text-xs text-davy-gray">
-                              {sugerenciasMeta.totalExacto + sugerenciasMeta.totalSinTipo + sugerenciasMeta.totalSinTenant} resultados
-                            </span>
-                          )}
-                        </div>
-
-                        {sugerenciasLoading && (
-                          <p className="text-xs text-davy-gray">Cargando sugerencias…</p>
-                        )}
-                        {sugerenciasError && (
-                          <p className="text-xs text-red-400">{sugerenciasError}</p>
-                        )}
-                        {!sugerenciasLoading && !sugerenciasError && sugerencias.length === 0 && (
-                          <p className="text-xs text-davy-gray italic">
-                            No hay editores que cubran este tenant + tier + tipo de pieza. Podés escribir el medio destino manualmente o revisar la agenda en /admin/editores.
-                          </p>
-                        )}
-
-                        {!sugerenciasLoading && !sugerenciasError && sugerencias.length > 0 && (
-                          <div className="space-y-3">
-                            {(['exacto', 'sin_tipo', 'sin_tenant'] as MatchLevel[]).map((nivel) => {
-                              const grupo = sugerencias.filter((s) => s.match === nivel);
-                              if (grupo.length === 0) return null;
-                              const titulo =
-                                nivel === 'exacto' ? 'Match exacto' :
-                                nivel === 'sin_tipo' ? 'Tipo no confirmado' :
-                                'Tenant no listado';
-                              return (
-                                <div key={nivel}>
-                                  <p className="text-[10px] text-davy-gray uppercase tracking-wider mb-1">
-                                    {titulo} ({grupo.length})
-                                  </p>
-                                  <div className="space-y-1.5">
-                                    {grupo.map((sug) => {
-                                      const elegida = editorElegidoId === sug.editor.id;
-                                      const badgeClasses =
-                                        nivel === 'exacto' ? 'bg-green-500/10 border-green-500/30 text-green-400' :
-                                        nivel === 'sin_tipo' ? 'bg-amber-500/10 border-amber-500/30 text-amber-400' :
-                                        'bg-blue-500/10 border-blue-500/30 text-blue-400';
-                                      const badgeTexto =
-                                        nivel === 'exacto' ? 'Match exacto' :
-                                        nivel === 'sin_tipo' ? 'Tipo no confirmado' :
-                                        'Tenant no listado';
-                                      return (
-                                        <button
-                                          key={sug.editor.id}
-                                          type="button"
-                                          onClick={() => handleElegirEditor(sug)}
-                                          className={`w-full text-left px-3 py-2 rounded border transition-colors ${
-                                            elegida
-                                              ? 'bg-amber-brand/5 border-amber-brand'
-                                              : 'bg-oxford-blue border-davy-gray/30 hover:border-davy-gray/60'
-                                          }`}
-                                        >
-                                          <div className="flex items-start justify-between gap-2">
-                                            <div className="min-w-0 flex-1">
-                                              <p className="text-sm text-seasalt truncate">
-                                                {sug.editor.nombre} {sug.editor.apellido}
-                                                <span className="text-davy-gray"> · {sug.editor.medio}</span>
-                                                {sug.editor.seccion && (
-                                                  <span className="text-davy-gray"> · {sug.editor.seccion}</span>
-                                                )}
-                                              </p>
-                                              <p className="text-xs text-davy-gray mt-0.5">Tier {sug.editor.tier}</p>
-                                            </div>
-                                            <span className={`text-[10px] px-2 py-0.5 rounded border whitespace-nowrap ${badgeClasses}`}>
-                                              {badgeTexto}
-                                            </span>
-                                          </div>
-                                        </button>
-                                      );
-                                    })}
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-
-                        {editorElegidoId && editorElegidoNombre && (
-                          <div className="mt-3 pt-3 border-t border-davy-gray/20">
-                            <p className="text-xs text-amber-brand">
-                              Editor elegido: <span className="font-medium">{editorElegidoNombre}</span>
-                              <span className="text-davy-gray"> · {editorElegidoMedio}</span>
-                            </p>
-                          </div>
-                        )}
-                      </div>
-                    </>
-                  ) : (
-                    <div className="bg-oxford-blue/50 border border-davy-gray/20 rounded p-3">
-                      <p className="text-xs text-davy-gray italic">
-                        Asigná tenant y template al project para ver sugerencias de editores.
-                      </p>
-                    </div>
-                  )}
-
-                  <input
-                    type="text"
-                    value={pitchMedio}
-                    onChange={(e) => {
-                      const nuevoValor = e.target.value;
-                      setPitchMedio(nuevoValor);
-                      // Chunk 11B: si el operador edita manualmente y el valor ya no
-                      // coincide con el medio del editor elegido, desvinculamos.
-                      if (editorElegidoId && nuevoValor !== editorElegidoMedio) {
-                        setEditorElegidoId(null);
-                        setEditorElegidoNombre(null);
-                        setEditorElegidoMedio(null);
-                      }
-                    }}
-                    placeholder="Medio destino (opcional, ej: La Tercera, El País)"
-                    className="w-full bg-oxford-blue border border-davy-gray/30 rounded px-4 py-2
-                               text-seasalt placeholder:text-davy-gray/50 focus:outline-none
-                               focus:border-amber-brand/50 text-sm"
-                  />
-                  <button
-                    onClick={handleConstruirPitch}
-                    disabled={!((project?.data as Record<string, unknown>)?.borrador) || construyendo}
-                    className="w-full py-2.5 bg-amber-brand text-oxford-blue rounded font-medium text-sm
-                               hover:bg-amber-brand/90 transition-colors
-                               disabled:opacity-40 disabled:cursor-not-allowed"
-                  >
-                    {construyendo ? 'Construyendo pitch…' : '📨 Construir Pitch desde Borrador'}
-                  </button>
-                </div>
-                {pitchError && <p className="text-red-400 text-sm mt-3">{pitchError}</p>}
-              </div>
-            )}
-
             {/* ── TAB: Documento de Investigacion IP (fase pesquisa) — Chunk 18B ── */}
             {activeTool === 'borrador_ip' && phaseConfig.tabs.some((t) => t.key === 'borrador_ip') && (
               <div className="space-y-6">
@@ -4726,6 +4313,51 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                     </>
                   );
                 })()}
+
+                {/* Chunk 23B: Historial de validaciones IP */}
+                {(() => {
+                  const valIpArr = ((project?.data?.validaciones_ip ?? []) as ValidacionIPEntry[]);
+                  if (valIpArr.length === 0) return null;
+                  const sorted = [...valIpArr].sort((a, b) =>
+                    new Date(b.generadoEn).getTime() - new Date(a.generadoEn).getTime()
+                  );
+                  return (
+                    <div className="mt-6 border border-davy-gray/20 rounded">
+                      <button
+                        type="button"
+                        onClick={() => setShowHistorialIP(!showHistorialIP)}
+                        className="w-full flex items-center justify-between px-4 py-3 text-sm text-davy-gray hover:text-seasalt transition-colors"
+                      >
+                        <span>Historial ({valIpArr.length} corrida{valIpArr.length !== 1 ? 's' : ''})</span>
+                        <span>{showHistorialIP ? '▲' : '▼'}</span>
+                      </button>
+                      {showHistorialIP && (
+                        <div className="border-t border-davy-gray/20 divide-y divide-davy-gray/10">
+                          {sorted.map((entry, idx) => (
+                            <div key={idx} className="px-4 py-2.5 flex items-center gap-4 text-sm">
+                              <span className="text-davy-gray text-xs min-w-[140px]">
+                                {new Date(entry.generadoEn).toLocaleString('es-CL', {
+                                  day: 'numeric', month: 'short', year: 'numeric',
+                                  hour: '2-digit', minute: '2-digit',
+                                })}
+                              </span>
+                              <span className={`font-bold ${entry.score >= 3.0 ? 'text-green-400' : 'text-red-400'}`}>
+                                {entry.score.toFixed(1)}/5
+                              </span>
+                              <span className={`text-xs px-2 py-0.5 rounded-full ${
+                                entry.apto_para_traspaso
+                                  ? 'bg-green-500/20 text-green-400'
+                                  : 'bg-red-500/20 text-red-400'
+                              }`}>
+                                {entry.apto_para_traspaso ? 'Apto ✓' : 'No apto ✗'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             )}
 
@@ -4804,75 +4436,31 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
             {activeTool === 'validador' &&
               phaseConfig.tabs.some((t) => t.key === 'validador') && (
                 <div>
-                  <p className="text-davy-gray text-sm mb-4">
-                    Validá el tono, sesgo, precisión, claridad y ética periodística de tu
-                    borrador antes de exportar. Cada análisis queda guardado en el historial de
-                    iteraciones.
-                  </p>
-                  {(() => {
-                    // Chunk 19B: texto esperado del borrador activo (MP prioritario, luego IP)
-                    const dataObj19 = (project?.data ?? {}) as Record<string, unknown>;
-                    const borradorMPRaw19 = dataObj19.borrador as Record<string, unknown> | undefined;
-                    const borradorIPRaw19 = dataObj19.borrador_ip as Record<string, unknown> | undefined;
-                    let textoEsperado: string | null = null;
-                    if (borradorMPRaw19) {
-                      const p = parseBorradorFromRaw(borradorMPRaw19);
-                      if (p) textoEsperado = buildBorradorTextoPlano(p);
-                    }
-                    if (!textoEsperado && borradorIPRaw19) {
-                      const p = parseBorradorFromRaw(borradorIPRaw19);
-                      if (p) textoEsperado = buildBorradorTextoPlano(p);
-                    }
-                    const textoDifiere = textoEsperado !== null && borradorTexto.trim() !== textoEsperado.trim();
-
-                    return (
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between">
-                          <label className="text-xs text-davy-gray">Texto a validar</label>
-                          {textoEsperado && (
-                            <button
-                              type="button"
-                              onClick={() => setBorradorTexto(textoEsperado!)}
-                              className="text-xs border border-davy-gray/30 text-davy-gray rounded px-2 py-0.5 hover:text-seasalt hover:border-davy-gray/60"
-                            >
-                              Restaurar borrador
-                            </button>
-                          )}
-                        </div>
-                        <textarea
-                          value={borradorTexto}
-                          onChange={(e) => setBorradorTexto(e.target.value)}
-                          placeholder="Pegá acá el texto del borrador a validar…"
-                          rows={8}
-                          maxLength={10000}
-                          className="w-full bg-oxford-blue border border-davy-gray/30 rounded px-4 py-2
-                                     text-seasalt placeholder:text-davy-gray/50 focus:outline-none
-                                     focus:border-amber-brand/50 text-sm resize-y"
-                        />
-                        {textoDifiere && (
-                          <div className="flex items-start gap-2 rounded-md border border-orange-200 bg-orange-50 p-3 text-sm text-orange-800 mb-3">
-                            <span>⚠️</span>
-                            <span>
-                              El texto a evaluar no coincide con el borrador activo del
-                              proyecto. El validador va a evaluar lo que ves en el campo,
-                              no el borrador guardado. Si querés evaluar el borrador actual,
-                              usá el botón &quot;Restaurar borrador&quot;.
-                            </span>
-                          </div>
-                        )}
-                        <button
-                          onClick={handleValidarBorrador}
-                          disabled={!borradorTexto.trim() || validandoBorrador}
-                          className="w-full py-2.5 bg-amber-brand text-oxford-blue rounded font-medium text-sm
-                                     hover:bg-amber-brand/90 transition-colors
-                                     disabled:opacity-40 disabled:cursor-not-allowed"
-                        >
-                          {validandoBorrador ? 'Analizando borrador…' : '✅ Validar Borrador'}
-                        </button>
-                      </div>
-                    );
-                  })()}
-                  {borradorError && <p className="text-red-400 text-sm mt-3">{borradorError}</p>}
+                  <div className="bg-blue-500/10 border border-blue-500/30 rounded p-4">
+                    <p className="text-blue-300 text-sm mb-2">
+                      El borrador fue validado en fase Pesquisa (Validador IP).
+                      Revisa el score antes de avanzar a Aprobado.
+                    </p>
+                    {(() => {
+                      const valIpArrRev = ((project?.data?.validaciones_ip ?? []) as ValidacionIPEntry[]);
+                      if (valIpArrRev.length === 0) {
+                        return <p className="text-davy-gray text-xs">Sin validaciones IP registradas.</p>;
+                      }
+                      const ultima = valIpArrRev[valIpArrRev.length - 1];
+                      return (
+                        <p className="text-seasalt text-sm">
+                          Ultimo score IP:{' '}
+                          <span className={`font-bold ${ultima.score >= 3.0 ? 'text-green-400' : 'text-red-400'}`}>
+                            {ultima.score.toFixed(1)}/5
+                          </span>
+                          {' — '}
+                          <span className={ultima.apto_para_traspaso ? 'text-green-400' : 'text-red-400'}>
+                            {ultima.apto_para_traspaso ? 'Apto para traspaso' : 'No apto'}
+                          </span>
+                        </p>
+                      );
+                    })()}
+                  </div>
                 </div>
               )}
 
