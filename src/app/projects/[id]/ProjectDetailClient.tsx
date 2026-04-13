@@ -285,7 +285,7 @@ interface TemplateOption {
   reviewLevel: string;
 }
 
-type ActiveTool = 'hipotesis' | 'vhp' | 'odf' | 'pitch' | 'radar' | 'validador' | 'borrador' | 'borrador_ip' | 'exportador' | 'prompt_visual';
+type ActiveTool = 'hipotesis' | 'vhp' | 'odf' | 'pitch' | 'radar' | 'validador' | 'validador_ip' | 'borrador' | 'borrador_ip' | 'exportador' | 'prompt_visual';
 
 interface PhaseConfig {
   tabs: { key: ActiveTool; label: string }[];
@@ -443,6 +443,7 @@ const PHASE_CONFIG: Record<string, PhaseConfig> = {
     tabs: [
       { key: 'odf', label: '🗂️ Organizador de Fuentes' },
       { key: 'borrador_ip', label: '📄 Documento de Investigacion' },
+      { key: 'validador_ip', label: '✅ Validador IP' },
       { key: 'radar', label: '📡 Radar Editorial' },
     ],
   },
@@ -859,6 +860,18 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
   const [borradorError, setBorradorError] = useState<string | null>(null);
   const [expandedBorrador, setExpandedBorrador] = useState<string | null>(null);
 
+  // Validador de Tono del Borrador IP (fase pesquisa) — Chunk 19C
+  const [ipValidadorTexto, setIpValidadorTexto] = useState('');
+  const [ipValidandoBorrador, setIpValidandoBorrador] = useState(false);
+  const [ipValidadorError, setIpValidadorError] = useState<string | null>(null);
+  const [ipResultadoValidacion, setIpResultadoValidacion] = useState<{
+    score: number;
+    resumen_ejecutivo: string;
+    dimensiones: { nombre: string; score: number; observacion: string }[];
+    recomendaciones: string[];
+    apto_para_traspaso: boolean;
+  } | null>(null);
+
   // Validador de Hipótesis y Pista (VHP) — Chunk 7B
   const [vhpTipoLead, setVhpTipoLead] = useState<LeadTipo>('documento');
   const [vhpDescripcion, setVhpDescripcion] = useState('');
@@ -978,6 +991,21 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
       const parsed = parseBorradorFromRaw(borradorIPRaw);
       if (parsed) {
         setBorradorTexto(buildBorradorTextoPlano(parsed));
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project?.id]);
+
+  // Chunk 19C: prefill del textarea del Validador IP desde data.borrador_ip
+  useEffect(() => {
+    if (!project) return;
+    if (ipValidadorTexto.trim()) return;
+    const dataObj = (project.data ?? {}) as Record<string, unknown>;
+    const borradorIPRaw = dataObj.borrador_ip as Record<string, unknown> | undefined;
+    if (borradorIPRaw) {
+      const parsed = parseBorradorFromRaw(borradorIPRaw);
+      if (parsed) {
+        setIpValidadorTexto(buildBorradorTextoPlano(parsed));
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1798,6 +1826,56 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
       setBorradorError(err instanceof Error ? err.message : 'Error desconocido');
     } finally {
       setValidandoBorrador(false);
+    }
+  }
+
+  // ── Chunk 19C: Validar borrador IP (fase pesquisa) ──
+  async function handleValidarBorradorIP() {
+    if (!project) return;
+    const dataObj = (project.data ?? {}) as Record<string, unknown>;
+    if (!dataObj.borrador_ip) {
+      setIpValidadorError('Genera el borrador IP antes de validar.');
+      return;
+    }
+    if (!ipValidadorTexto.trim()) return;
+    setIpValidandoBorrador(true);
+    setIpValidadorError(null);
+
+    try {
+      const res = await fetch('/api/ai/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tool: 'validador_tono_ip',
+          userMessage: ipValidadorTexto.trim(),
+          projectId: project.id,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Error validando borrador IP');
+
+      const result = json.result ?? {};
+      setIpResultadoValidacion({
+        score: Number(result.score ?? 0),
+        resumen_ejecutivo: String(result.resumen_ejecutivo ?? ''),
+        dimensiones: Array.isArray(result.dimensiones)
+          ? (result.dimensiones as { nombre: string; score: number; observacion: string }[]).map(
+              (d) => ({
+                nombre: String(d.nombre ?? ''),
+                score: Number(d.score ?? 0),
+                observacion: String(d.observacion ?? ''),
+              })
+            )
+          : [],
+        recomendaciones: Array.isArray(result.recomendaciones)
+          ? (result.recomendaciones as unknown[]).map(String)
+          : [],
+        apto_para_traspaso: Boolean(result.apto_para_traspaso ?? false),
+      });
+    } catch (err) {
+      setIpValidadorError(err instanceof Error ? err.message : 'Error desconocido');
+    } finally {
+      setIpValidandoBorrador(false);
     }
   }
 
@@ -4358,6 +4436,192 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                               tomara esta investigacion como base de evidencia.
                             </p>
                           </div>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+              </div>
+            )}
+
+            {/* ── TAB: Validador IP (fase pesquisa) — Chunk 19C ── */}
+            {activeTool === 'validador_ip' && phaseConfig.tabs.some((t) => t.key === 'validador_ip') && (
+              <div>
+                {(() => {
+                  const dataObj19c = (project?.data ?? {}) as Record<string, unknown>;
+                  const borradorIPRaw19c = dataObj19c.borrador_ip as Record<string, unknown> | undefined;
+
+                  if (!borradorIPRaw19c) {
+                    return (
+                      <div className="bg-red-500/10 border border-red-500/40 rounded p-4">
+                        <p className="text-red-400 text-sm font-medium mb-1">
+                          Genera el borrador IP en esta fase antes de usar el Validador IP.
+                        </p>
+                        <p className="text-davy-gray text-xs">
+                          El Validador IP evalua el documento de investigacion generado en el tab
+                          Documento de Investigacion. Sin borrador IP no hay texto que evaluar.
+                        </p>
+                      </div>
+                    );
+                  }
+
+                  const parsedIP19c = parseBorradorFromRaw(borradorIPRaw19c);
+                  const tituloIP = parsedIP19c?.borrador?.titulo ?? 'Sin titulo';
+                  const modoIP = parsedIP19c?.modo ?? null;
+                  const textoEsperadoIP = parsedIP19c ? buildBorradorTextoPlano(parsedIP19c) : null;
+                  const textoDifiereIP = textoEsperadoIP !== null && ipValidadorTexto.trim() !== textoEsperadoIP.trim();
+
+                  return (
+                    <>
+                      {/* Contexto del borrador IP */}
+                      <div className="bg-green-500/10 border border-green-500/30 rounded p-3 mb-4">
+                        <p className="text-green-400 text-xs">
+                          Borrador IP disponible: <span className="font-medium text-seasalt">{tituloIP}</span>
+                          {modoIP && (
+                            <span className="ml-2 bg-blue-500/20 text-blue-300 text-xs px-2 py-0.5 rounded">
+                              Modo: {modoIP}
+                            </span>
+                          )}
+                        </p>
+                      </div>
+
+                      <p className="text-davy-gray text-sm mb-4">
+                        Evalua el rigor periodistico, estructura, calidad de fuentes y modo de
+                        operacion del borrador IP antes de decidir el traspaso a MetricPress.
+                      </p>
+
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs text-davy-gray">Texto a validar</label>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (textoEsperadoIP) setIpValidadorTexto(textoEsperadoIP);
+                            }}
+                            className="text-xs border border-davy-gray/30 text-davy-gray rounded px-2 py-0.5 hover:text-seasalt hover:border-davy-gray/60"
+                          >
+                            Restaurar borrador IP
+                          </button>
+                        </div>
+                        <textarea
+                          value={ipValidadorTexto}
+                          onChange={(e) => setIpValidadorTexto(e.target.value)}
+                          placeholder="El borrador IP se carga automaticamente aqui…"
+                          rows={8}
+                          maxLength={10000}
+                          className="w-full bg-oxford-blue border border-davy-gray/30 rounded px-4 py-2
+                                     text-seasalt placeholder:text-davy-gray/50 focus:outline-none
+                                     focus:border-amber-brand/50 text-sm resize-y"
+                        />
+                        {textoDifiereIP && (
+                          <div className="flex items-start gap-2 rounded-md border border-orange-200 bg-orange-50 p-3 text-sm text-orange-800 mb-3">
+                            <span>⚠️</span>
+                            <span>
+                              El texto a evaluar no coincide con el borrador IP activo del
+                              proyecto. El validador va a evaluar lo que ves en el campo,
+                              no el borrador guardado. Si queres evaluar el borrador actual,
+                              usa el boton &quot;Restaurar borrador IP&quot;.
+                            </span>
+                          </div>
+                        )}
+                        <button
+                          onClick={handleValidarBorradorIP}
+                          disabled={!ipValidadorTexto.trim() || ipValidandoBorrador}
+                          className="w-full py-2.5 bg-amber-brand text-oxford-blue rounded font-medium text-sm
+                                     hover:bg-amber-brand/90 transition-colors
+                                     disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          {ipValidandoBorrador ? 'Validando borrador IP…' : '✅ Validar borrador IP'}
+                        </button>
+                      </div>
+
+                      {ipValidadorError && <p className="text-red-400 text-sm mt-3">{ipValidadorError}</p>}
+
+                      {/* Panel de resultado */}
+                      {ipResultadoValidacion && (
+                        <div className="mt-6 space-y-4">
+                          {/* Score + badge */}
+                          <div className="flex items-center gap-4">
+                            <span
+                              className={`text-3xl font-bold ${
+                                ipResultadoValidacion.score >= 4
+                                  ? 'text-green-400'
+                                  : ipResultadoValidacion.score >= 3
+                                    ? 'text-yellow-400'
+                                    : 'text-red-400'
+                              }`}
+                            >
+                              {ipResultadoValidacion.score.toFixed(1)}/5
+                            </span>
+                            <span
+                              className={`text-xs px-3 py-1 rounded-full font-medium ${
+                                ipResultadoValidacion.apto_para_traspaso
+                                  ? 'bg-green-500/20 text-green-400 border border-green-500/40'
+                                  : 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
+                              }`}
+                            >
+                              {ipResultadoValidacion.apto_para_traspaso
+                                ? 'Apto para traspaso'
+                                : 'Revisar antes de traspasar'}
+                            </span>
+                          </div>
+
+                          {/* Resumen ejecutivo */}
+                          {ipResultadoValidacion.resumen_ejecutivo && (
+                            <p className="text-seasalt/80 text-sm">
+                              {ipResultadoValidacion.resumen_ejecutivo}
+                            </p>
+                          )}
+
+                          {/* Dimensiones */}
+                          {ipResultadoValidacion.dimensiones.length > 0 && (
+                            <div className="space-y-3">
+                              <h4 className="text-xs font-semibold text-davy-gray uppercase tracking-wide">
+                                Dimensiones evaluadas
+                              </h4>
+                              {ipResultadoValidacion.dimensiones.map((dim, i) => (
+                                <div
+                                  key={i}
+                                  className="bg-oxford-blue rounded border border-davy-gray/15 p-3"
+                                >
+                                  <div className="flex items-center justify-between mb-1">
+                                    <span className="text-seasalt text-sm font-medium">
+                                      {dim.nombre}
+                                    </span>
+                                    <span
+                                      className={`text-sm font-bold ${
+                                        dim.score >= 4
+                                          ? 'text-green-400'
+                                          : dim.score >= 3
+                                            ? 'text-yellow-400'
+                                            : 'text-red-400'
+                                      }`}
+                                    >
+                                      {dim.score.toFixed(1)}/5
+                                    </span>
+                                  </div>
+                                  <p className="text-davy-gray text-xs">{dim.observacion}</p>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Recomendaciones */}
+                          {ipResultadoValidacion.recomendaciones.length > 0 && (
+                            <div>
+                              <h4 className="text-xs font-semibold text-davy-gray uppercase tracking-wide mb-2">
+                                Recomendaciones
+                              </h4>
+                              <ul className="space-y-1">
+                                {ipResultadoValidacion.recomendaciones.map((rec, i) => (
+                                  <li key={i} className="text-seasalt/80 text-sm flex items-start gap-2">
+                                    <span className="text-amber-brand mt-0.5">→</span>
+                                    <span>{rec}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
                         </div>
                       )}
                     </>
