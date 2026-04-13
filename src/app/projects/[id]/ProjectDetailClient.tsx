@@ -433,11 +433,13 @@ const PHASE_CONFIG: Record<string, PhaseConfig> = {
   produccion: {
     tabs: [
       { key: 'borrador', label: '✍️ Generador de Borrador' },
-      { key: 'pitch', label: '📨 Constructor de Pitch' },
     ],
   },
   visual: {
-    tabs: [{ key: 'prompt_visual', label: '🎨 Generador de Prompt Visual' }],
+    tabs: [
+      { key: 'prompt_visual', label: '🎨 Generador de Prompt Visual' },
+      { key: 'pitch', label: '📨 Constructor de Pitch' },
+    ],
   },
   revision: {
     tabs: [{ key: 'validador', label: '✅ Validador de Tono del Borrador' }],
@@ -1059,6 +1061,10 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
           setExportGateConditions(json.conditions);
           return;
         }
+        if (json.code === 'BORRADOR_IP_REQUIRED') {
+          alert(json.error);
+          return;
+        }
         throw new Error(json.error);
       }
       await fetchProject();
@@ -1313,6 +1319,33 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
         : [];
 
       let userMessage = '';
+
+      // Chunk 18C: inyectar borrador IP como contexto prioritario
+      const borradorIPRawMP = project.data?.borrador_ip as Record<string, unknown> | undefined;
+      if (borradorIPRawMP) {
+        const ipParsed = parseBorradorFromRaw(borradorIPRawMP);
+        if (ipParsed) {
+          userMessage += `BORRADOR IP VERIFICADO (InvestigaPress)\n`;
+          userMessage += `Este documento fue generado en la fase de pesquisa a partir de las fuentes verificadas del expediente. Usarlo como base y fuente de verdad prioritaria. Aplicar sobre el el genero, la voz y la estructura del template ${project.templateName ?? ''} de ${project.tenantName ?? ''}. No fabricar datos que no esten en este documento.\n\n`;
+          userMessage += `${ipParsed.borrador.titulo}\n`;
+          if (ipParsed.borrador.bajada) userMessage += `${ipParsed.borrador.bajada}\n`;
+          userMessage += `\n${ipParsed.borrador.lead}\n\n`;
+          ipParsed.borrador.cuerpo.forEach((sec) => {
+            if (sec.subtitulo) userMessage += `## ${sec.subtitulo}\n`;
+            sec.parrafos.forEach((p) => {
+              userMessage += `${p}\n\n`;
+            });
+          });
+          if (ipParsed.borrador.cierre) userMessage += `${ipParsed.borrador.cierre}\n\n`;
+          if (ipParsed.metadata.fuentes_citadas.length > 0) {
+            userMessage += `Fuentes citadas en el IP: ${ipParsed.metadata.fuentes_citadas.join(', ')}\n`;
+          }
+          if (ipParsed.notas_editoriales) {
+            userMessage += `Notas editoriales IP: ${ipParsed.notas_editoriales}\n`;
+          }
+          userMessage += `---\n\n`;
+        }
+      }
 
       if (project.thesis) {
         userMessage += `TESIS ORIGINAL DEL PROJECT:\n${project.thesis}\n\n`;

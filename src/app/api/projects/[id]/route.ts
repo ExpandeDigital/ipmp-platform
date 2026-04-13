@@ -323,6 +323,20 @@ export async function PATCH(
 
         const nextStatus = PIPELINE_ORDER[currentIndex + 1];
 
+        // ── Chunk 18C: no avanzar a produccion sin borrador IP ──
+        if (nextStatus === 'produccion') {
+          const mergedDataForIP = ((updates.data ?? project.data) ?? {}) as Record<string, unknown>;
+          if (!mergedDataForIP.borrador_ip) {
+            return NextResponse.json(
+              {
+                error: 'Debes generar el Documento de Investigacion en la fase Pesquisa antes de traspasar a MetricPress',
+                code: 'BORRADOR_IP_REQUIRED',
+              },
+              { status: 400 }
+            );
+          }
+        }
+
         // ── BLOQUEO: no avanzar a produccion sin tenant+template ──
         if (nextStatus === 'produccion') {
           // Verificar si ya tiene tenant+template (puede venir en este mismo PATCH o ya estar asignado)
