@@ -867,26 +867,118 @@ vieja queda como campo opcional en la interfaz TypeScript hasta que
 todos los proyectos existentes sean regenerados naturalmente. No hay
 ALTER TABLE ni script de update masivo.
 
-### Chunk 20+ — Futuros (sin orden definitivo)
+### Chunk 20 — Exportador Word, Vista Previa, UX pipeline [COMPLETADO 13 abril 2026]
 
-- Persistencia de validaciones IP en data.validaciones_ip[]:
-  el resultado del Validador IP hoy es efimero en React. Persistirlo
-  permite historial de iteraciones antes del traspaso, identico al
-  patron de validaciones_borrador[] del validador MP.
+- **fix(extract-content)** `2066e2f` limite de truncacion de
+  archivos adjuntos aumentado de 12.000 a 50.000 caracteres.
+  Respuesta expandida con metadata: charCount, truncated,
+  originalLength. Banner amber en UI cuando un archivo fue
+  procesado parcialmente. Resuelve cuello de botella real
+  detectado con documento de investigacion de 22.163 caracteres.
 
-- Migracion limpia de clave legacy borrador en BorradorData:
-  cuando todos los proyectos existentes hayan regenerado su borrador
-  (escribiendo contenido en vez de borrador), eliminar el campo
-  legacy borrador? de la interfaz y el fallback del parser.
+- **fix(ai-generate)** `9d310c0` limite de userMessage en
+  /api/ai/generate aumentado de 10.000 a 120.000 caracteres.
+  Cubre documentos de investigacion con multiples fuentes
+  adjuntas sin exceder la ventana de contexto del modelo
+  (Claude Sonnet: 200K tokens). Resuelve segundo cuello de
+  botella del pipeline end-to-end con documentos reales.
 
-- Bitacora de Pesquisa Externa con trazabilidad de hallazgos
-  por motor: diferida a cuando la plataforma se abra a operadores
-  externos.
+- **20A** `5329ac5` feat(chunk20a): tres features en
+  ProjectDetailClient.tsx y export/route.ts:
+  (1) Labels descriptivos con subtitulo en text-xs italic
+  en todos los tabs modificados del pipeline: "Borrador IP —
+  Documento de Investigacion", "Validador IP — Score
+  pre-traspaso", "Borrador Final — Insumo Periodistico",
+  "Validador — Control de Calidad", "Prompt Visual —
+  Instruccion para IA", "Pitch — Propuesta para Editor".
+  (2) Upload de imagen generada externamente en tab Prompt
+  Visual: input file (jpg/png/webp, max 10MB), handler
+  handleUploadImagenVisual via /api/fuentes/upload, persiste
+  en data.imagen_visual, thumbnail preview con opcion
+  Reemplazar/Eliminar. Nuevo tipo ImagenVisualData.
+  (3) Tab "Vista Previa — Lectura Final" en fase aprobado:
+  renderiza el insumo periodistico completo sin chrome
+  tecnico (titulo, bajada, lead, cuerpo, cierre), thumbnail
+  de imagen si existe, footer con palabras/fuentes/score,
+  boton retroceso a Produccion con confirm.
 
-- Score apto_para_traspaso como soft gate confirmable: hoy el
-  Validador IP informa pero no bloquea. Si score < 3.0, agregar
-  un soft gate confirmable en el avance pesquisa -> produccion
-  identico a los soft gates del Chunk 9.
+- **fix(export)** `ab771e4` tres fixes en export/route.ts y
+  ProjectDetailClient.tsx:
+  (A) Imagen en ZIP via @vercel/blob SDK: reemplaza fetch()
+  directo por blobGet() con autenticacion automatica via
+  BLOB_READ_WRITE_TOKEN, helper streamToBuffer() para
+  convertir ReadableStream a Buffer compatible con JSZip.
+  Best-effort: ZIP se genera sin imagen si el fetch falla.
+  (B) Archivos Word (.docx) en ZIP: instalado paquete docx,
+  cuatro builders (buildBorradorDocx, buildPitchDocx,
+  buildFuentesDocx, buildHipotesisDocx). borrador.docx con
+  encabezado meta, titulo H1, bajada italic con borde, lead
+  con fondo sutil, cuerpo justificado, cierre con borde,
+  footer IPMP. pitch.docx con asunto, cuerpo, detalles de
+  envio. fuentes.docx tabla 5 columnas con header azul y
+  filas alternas. hipotesis.docx con campos y verificaciones
+  numeradas. proyecto.json se mantiene como expediente
+  tecnico. ZIP ahora contiene 7 archivos para este proyecto.
+  (C) Boton "Avanzar a Visual" eliminado del tab Borrador MP
+  en fase produccion — redundante con la barra del pipeline.
+
+- **feat(export)** `0165145` nombres de archivos del ZIP con
+  genero periodistico y titulo: helper buildNombreArchivo()
+  que sanitiza templateName (normaliza NFD, elimina acentos
+  y caracteres especiales) y titulo (truncado a 50 chars en
+  palabra completa). Ejemplos: "Cronica narrativa — El
+  ascenso silencioso Claude AI duplica.docx", "Cronica
+  narrativa — Pitch editorial.docx".
+
+Decision arquitectonica registrada: el exportador del Chunk
+20 es un exportador de producto terminado, no de estado. Los
+cuatro archivos Word representan los artefactos editoriales
+del pipeline en formato apto para stakeholders sin acceso a
+la plataforma. El proyecto.json preserva el expediente
+tecnico completo para trazabilidad. Esta arquitectura
+implementa el Principio 4 de filantropia digital:
+portabilidad total de los datos del usuario.
+
+Gap arquitectonico identificado y resuelto: el pipeline
+carecia de una instancia de lectura del insumo final antes
+de exportar. La Vista Previa en fase aprobado cierra ese gap.
+Gap de imagen externa resuelto: la imagen generada en
+herramientas externas (Manus, Midjourney) ahora tiene hogar
+en el pipeline via upload en tab Prompt Visual.
+
+### Chunk 21+ — Futuros (sin orden definitivo)
+
+- Dashboard de consumo por tenant (Chunk 21): endpoint
+  /api/admin/consumo agrupado por tenant/tool/periodo,
+  UI en /admin/consumo con tabla tokens y costo estimado.
+
+- Filtros en listado de proyectos (Chunk 22): filtro por
+  status, tenantId y busqueda por titulo. Editor elegido
+  incluido en pitch.docx del ZIP.
+
+- Validador IP persistencia + soft gate (Chunk 23):
+  data.validaciones_ip[], historial de iteraciones,
+  soft gate si score < 3.0 antes del traspaso, advertencia
+  si borrador IP esta en modo diagnostico al traspasar.
+
+- verificaciones_criticas como sistema real (Chunk 24):
+  estados persistidos (pendiente/en_curso/confirmada/
+  descartada), asociacion a fuentes del ODF, contador
+  en pipeline bar.
+
+- Brand-hypothesis reinterpretation post-traspaso (Chunk 25):
+  boton reinterpretar hipotesis bajo marca en modal de
+  traspaso, campo hipotesis_elegida_brand adicional.
+
+- Auth + apertura a operadores externos (Chunk 28+):
+  login por usuario, roles, onboarding. Requiere sesion
+  de planificacion propia antes de implementar.
+
+- Deuda tecnica activa: DT-1 campo legacy borrador? en
+  BorradorData (eliminar cuando todos los proyectos
+  existentes hayan regenerado), DT-2 pitch.pitch vs
+  texto_completo, DT-3 tabla assets muerta, DT-4 tabla
+  revisions muerta.
 
 ## Hallazgos de validacion — Chunk 19 (13 abril 2026)
 
@@ -1137,3 +1229,65 @@ El producto terminado que el operador espera ver requiere primero
 poblar el ODF con evidencia verificada, luego regenerar el borrador
 desde esa evidencia, y finalmente que el gate 18A valide que el
 resultado cumple los estandares antes de permitir el export.
+
+## Hallazgos de validacion — Chunk 20 (13 abril 2026)
+
+Chunk 20 cierra el gap del exportador (estado → producto
+terminado) y resuelve dos cuellos de botella criticos
+detectados en validacion end-to-end con documentos reales.
+
+### a) Dos limites bloqueaban el pipeline con documentos reales
+
+La validacion con el documento Investigacion_Claude_AI_
+Participacion_Mercado.docx (43.800 bytes, 22.163 chars
+extraidos) detecto dos limites hardcodeados que bloqueaban
+el flujo canonico completo:
+
+Limite 1 — extract-content: truncaba a 12.000 chars. El
+documento de 22.163 chars llegaba al modelo al 54%. El
+operador no tenia indicador de que el documento fue cortado.
+Fix: limite aumentado a 50.000 chars + metadata de
+truncacion en la respuesta + banner informativo en UI.
+
+Limite 2 — /api/ai/generate: rechazaba userMessage mayor
+a 10.000 chars con error "Campos requeridos: tool, userMessage
+(max 10.000 chars)". El contenido extraido del documento
+superaba ese limite antes de llegar al modelo. Fix: limite
+aumentado a 120.000 chars (aprox 90K tokens, dentro de la
+ventana de Sonnet).
+
+Aprendizaje: los limites de desarrollo (10K-12K chars) no
+reflejaban los volumenes reales de investigacion periodistica.
+La clausula de detencion no aplica a limites numericos — el
+operador debe poder correr el pipeline con documentos reales
+sin ajustes manuales.
+
+### b) Gap de comprension del pipeline: sesion de clarificacion
+
+La sesion del Chunk 20 incluyo una clarificacion extensa del
+pipeline para el operador: hipotesis vs borrador IP vs borrador
+MP vs fuente ODF. Este gap de comprension es un hallazgo de
+producto: el pipeline necesita labels mas descriptivos (resuelto
+en 20A) y una Vista Previa del insumo final antes de exportar
+(resuelto en 20A). La Vista Previa en fase aprobado cierra la
+pregunta operativa "que es exactamente lo que voy a exportar".
+
+### c) La imagen generada externamente no tenia hogar
+
+El flujo operativo del Chunk 14 establece que IPMP genera el
+prompt visual pero no la imagen — la imagen se genera en
+herramientas externas. Sin embargo, no habia manera de
+reincorporar esa imagen al pipeline para incluirla en el ZIP.
+El upload en el tab Prompt Visual cierra ese circuito. El ZIP
+ahora es un paquete editorial completo: texto periodistico +
+pitch + fuentes + hipotesis + imagen + expediente tecnico.
+
+### d) ZIP como entregable para stakeholders
+
+La conversion de .md y .json a .docx con nombres descriptivos
+(genero + titulo) responde al hallazgo operativo de que el ZIP
+era tecnicamente correcto pero poco amigable para stakeholders
+sin acceso a la plataforma. Un editor externo puede abrir
+"Cronica narrativa — El ascenso silencioso.docx" sin contexto
+tecnico previo. El naming con genero periodistico implementa
+el Principio 4 de filantropia digital: portabilidad real.
