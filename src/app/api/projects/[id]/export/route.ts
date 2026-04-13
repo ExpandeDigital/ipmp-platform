@@ -1,14 +1,15 @@
 /**
- * IP+MP Platform — Exportador de Project (Chunk 13B)
+ * IP+MP Platform — Exportador de Project (Chunk 13B + 20A-fix)
  *
  * POST /api/projects/[id]/export
  *
  * Genera un ZIP en memoria con el contenido del project:
- *   [publicId]/proyecto.json   — data completa del project
- *   [publicId]/borrador.md     — borrador en markdown (si existe)
- *   [publicId]/pitch.md        — pitch en markdown (si existe)
- *   [publicId]/fuentes-odf.json — fuentes del ODF (si existen)
- *   [publicId]/hipotesis.json  — hipotesis generadas (si existen)
+ *   [publicId]/borrador.docx     — borrador en Word
+ *   [publicId]/pitch.docx        — pitch en Word
+ *   [publicId]/fuentes.docx      — fuentes del ODF en tabla Word
+ *   [publicId]/hipotesis.docx    — hipotesis en Word
+ *   [publicId]/proyecto.json     — data completa del project
+ *   [publicId]/imagen-visual.*   — imagen visual (si existe)
  *
  * Devuelve application/zip con Content-Disposition attachment.
  */
@@ -18,8 +19,18 @@ import { db } from '@/db';
 import { projects, tenants, templates } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import JSZip from 'jszip';
+import { get as blobGet } from '@vercel/blob';
+import {
+  Document, Packer, Paragraph, TextRun, HeadingLevel,
+  AlignmentType, Table, TableRow, TableCell,
+  WidthType, BorderStyle, ShadingType, LevelFormat,
+} from 'docx';
 
 export const dynamic = 'force-dynamic';
+
+// ── Constantes de estilo ──
+const FONT = 'Arial';
+const FOOTER_TEXT = 'Generado por IPMP Platform — Expande Digital Consultores SpA';
 
 // ── Helper: buscar project por UUID ──
 async function findProjectForExport(id: string) {
@@ -53,52 +64,447 @@ async function findProjectForExport(id: string) {
   return rows[0] ?? null;
 }
 
-// ── Helper: borrador a markdown ──
-function borradorToMarkdown(borrador: Record<string, unknown>): string {
-  // Chunk 19D: lectura dual — clave nueva 'contenido' tiene prioridad sobre 'borrador' (legacy)
+// ── Helper: footer paragraph ──
+function footerParagraph(): Paragraph {
+  return new Paragraph({
+    border: { top: { style: BorderStyle.SINGLE, size: 4, color: 'CCCCCC' } },
+    spacing: { before: 400 },
+    children: [
+      new TextRun({ text: FOOTER_TEXT, font: FONT, size: 18, color: '888888' }),
+    ],
+  });
+}
+
+// ── Helper: header meta lines for borrador/pitch ──
+function headerMeta(publicId: string, tenantName: string | null, templateName: string | null, fecha: string): Paragraph[] {
+  const lines: string[] = [publicId];
+  if (templateName && tenantName) lines.push(`${templateName} — ${tenantName}`);
+  if (fecha) lines.push(`Generado: ${new Date(fecha).toLocaleString('es-CL')}`);
+  return lines.map((text) => new Paragraph({
+    alignment: AlignmentType.RIGHT,
+    children: [new TextRun({ text, font: FONT, size: 18, color: '888888' })],
+  }));
+}
+
+// ── Helper: borrador a Document ──
+function buildBorradorDocx(
+  borrador: Record<string, unknown>,
+  publicId: string,
+  tenantName: string | null,
+  templateName: string | null,
+): Document {
+  // Chunk 19D: lectura dual
   const b = (borrador.contenido ?? borrador.borrador) as Record<string, unknown> | undefined;
-  if (!b) return '# (borrador sin estructura)\n';
+  const metadata = (borrador.metadata ?? {}) as Record<string, unknown>;
+  const generadoEn = typeof borrador.generadoEn === 'string' ? borrador.generadoEn : '';
 
-  const lines: string[] = [];
+  const children: Paragraph[] = [];
 
-  if (b.titulo) lines.push(`# ${b.titulo}`);
-  if (b.bajada) lines.push(`\n## Bajada\n\n${b.bajada}`);
-  if (b.lead) lines.push(`\n## Lead\n\n${b.lead}`);
+  // Header meta
+  children.push(...headerMeta(publicId, tenantName, templateName, generadoEn));
 
-  const cuerpo = Array.isArray(b.cuerpo) ? b.cuerpo : [];
-  if (cuerpo.length > 0) {
-    lines.push(`\n## Cuerpo`);
+  if (!b) {
+    children.push(new Paragraph({
+      children: [new TextRun({ text: '(borrador sin estructura)', font: FONT, size: 24 })],
+    }));
+  } else {
+    // Titulo
+    if (b.titulo) {
+      children.push(new Paragraph({
+        heading: HeadingLevel.HEADING_1,
+        spacing: { before: 240 },
+        children: [new TextRun({ text: String(b.titulo), font: FONT, size: 32, bold: true })],
+      }));
+    }
+
+    // Bajada
+    if (b.bajada) {
+      children.push(new Paragraph({
+        border: { left: { style: BorderStyle.SINGLE, size: 4, color: '888888' } },
+        indent: { left: 200 },
+        spacing: { before: 120, after: 120 },
+        children: [new TextRun({ text: String(b.bajada), font: FONT, size: 24, italics: true })],
+      }));
+    }
+
+    // Lead
+    if (b.lead) {
+      children.push(new Paragraph({
+        spacing: { before: 240 },
+        shading: { type: ShadingType.CLEAR, fill: 'F5F5F5' },
+        children: [new TextRun({ text: String(b.lead), font: FONT, size: 24 })],
+      }));
+    }
+
+    // Cuerpo
+    const cuerpo = Array.isArray(b.cuerpo) ? b.cuerpo : [];
     for (const sec of cuerpo) {
       const s = sec as Record<string, unknown>;
-      if (s.subtitulo) lines.push(`\n### ${s.subtitulo}`);
+      if (s.subtitulo) {
+        children.push(new Paragraph({
+          heading: HeadingLevel.HEADING_2,
+          spacing: { before: 240 },
+          children: [new TextRun({ text: String(s.subtitulo), font: FONT, size: 26, bold: true })],
+        }));
+      }
       const parrafos = Array.isArray(s.parrafos) ? s.parrafos : [];
-      lines.push(parrafos.map(String).join('\n\n'));
+      for (const p of parrafos) {
+        children.push(new Paragraph({
+          alignment: AlignmentType.JUSTIFIED,
+          spacing: { after: 120 },
+          children: [new TextRun({ text: String(p), font: FONT, size: 24 })],
+        }));
+      }
+    }
+
+    // Cierre
+    if (b.cierre) {
+      children.push(new Paragraph({
+        border: { top: { style: BorderStyle.SINGLE, size: 4, color: 'CCCCCC' } },
+        spacing: { before: 240 },
+        children: [new TextRun({ text: String(b.cierre), font: FONT, size: 24, italics: true })],
+      }));
     }
   }
 
-  if (b.cierre) lines.push(`\n## Cierre\n\n${b.cierre}`);
-
-  const metadata = (borrador.metadata ?? {}) as Record<string, unknown>;
+  // Fuentes citadas
   const fuentes = Array.isArray(metadata.fuentes_citadas) ? metadata.fuentes_citadas : [];
   if (fuentes.length > 0) {
-    lines.push(`\n---\n\nFuentes citadas:\n${fuentes.map((f) => `- ${f}`).join('\n')}`);
+    children.push(new Paragraph({
+      heading: HeadingLevel.HEADING_2,
+      spacing: { before: 360 },
+      children: [new TextRun({ text: 'Fuentes citadas', font: FONT, size: 26, bold: true })],
+    }));
+    for (const f of fuentes) {
+      children.push(new Paragraph({
+        spacing: { after: 60 },
+        children: [new TextRun({ text: `• ${String(f)}`, font: FONT, size: 24 })],
+      }));
+    }
   }
 
-  return lines.join('\n');
+  children.push(footerParagraph());
+
+  return new Document({
+    sections: [{
+      properties: {
+        page: { margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 } },
+      },
+      children,
+    }],
+  });
 }
 
-// ── Helper: pitch a markdown ──
-function pitchToMarkdown(pitch: Record<string, unknown>): string {
+// ── Helper: pitch a Document ──
+function buildPitchDocx(
+  pitch: Record<string, unknown>,
+  publicId: string,
+  tenantName: string | null,
+  templateName: string | null,
+): Document {
   const p = pitch.pitch as Record<string, unknown> | undefined;
-  const lines: string[] = [];
+  const generadoEn = typeof pitch.generadoEn === 'string' ? pitch.generadoEn : '';
 
-  if (p?.asunto) lines.push(`# Pitch: ${p.asunto}`);
-  if (pitch.texto_completo) lines.push(`\n${pitch.texto_completo}`);
-  lines.push(`\n---`);
-  if (pitch.medio_destino) lines.push(`\nMedio destino: ${pitch.medio_destino}`);
-  if (pitch.notas_estrategicas) lines.push(`Notas estrategicas: ${pitch.notas_estrategicas}`);
+  const children: Paragraph[] = [];
 
-  return lines.join('\n');
+  children.push(...headerMeta(publicId, tenantName, templateName, generadoEn));
+
+  // Titulo
+  children.push(new Paragraph({
+    heading: HeadingLevel.HEADING_1,
+    spacing: { before: 240 },
+    children: [new TextRun({ text: 'Pitch Editorial', font: FONT, size: 32, bold: true })],
+  }));
+
+  // Asunto
+  if (p?.asunto) {
+    children.push(new Paragraph({
+      border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: 'CCCCCC' } },
+      spacing: { after: 200 },
+      children: [
+        new TextRun({ text: 'Asunto: ', font: FONT, size: 24, bold: true }),
+        new TextRun({ text: String(p.asunto), font: FONT, size: 24 }),
+      ],
+    }));
+  }
+
+  // Cuerpo del pitch
+  if (pitch.texto_completo) {
+    const parrafos = String(pitch.texto_completo).split(/\n\n+/);
+    for (const parrafo of parrafos) {
+      const trimmed = parrafo.trim();
+      if (!trimmed) continue;
+      children.push(new Paragraph({
+        alignment: AlignmentType.JUSTIFIED,
+        spacing: { after: 120 },
+        children: [new TextRun({ text: trimmed, font: FONT, size: 24 })],
+      }));
+    }
+  }
+
+  // Detalles de envio
+  const detalles: { label: string; value: string }[] = [];
+  if (pitch.medio_destino) detalles.push({ label: 'Medio destino', value: String(pitch.medio_destino) });
+  if (pitch.notas_estrategicas) detalles.push({ label: 'Notas estrategicas', value: String(pitch.notas_estrategicas) });
+
+  if (detalles.length > 0) {
+    children.push(new Paragraph({
+      heading: HeadingLevel.HEADING_2,
+      spacing: { before: 360 },
+      children: [new TextRun({ text: 'Detalles de envio', font: FONT, size: 26, bold: true })],
+    }));
+    for (const d of detalles) {
+      children.push(new Paragraph({
+        spacing: { after: 80 },
+        children: [
+          new TextRun({ text: `${d.label}: `, font: FONT, size: 24, bold: true }),
+          new TextRun({ text: d.value, font: FONT, size: 24 }),
+        ],
+      }));
+    }
+  }
+
+  children.push(footerParagraph());
+
+  return new Document({
+    sections: [{
+      properties: {
+        page: { margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 } },
+      },
+      children,
+    }],
+  });
+}
+
+// ── Helper: fuentes a Document (tabla) ──
+function buildFuentesDocx(
+  fuentes: unknown[],
+  publicId: string,
+): Document {
+  const COL_WIDTHS = [2800, 1500, 1200, 1200, 2326]; // total = 9026 DXA
+  const HEADERS = ['Nombre', 'Rol', 'Estado', 'Confianza', 'URL'];
+  const HEADER_FILL = '1F3864';
+  const ROW_EVEN = 'EBF3FB';
+  const ROW_ODD = 'FFFFFF';
+  const BORDER = { style: BorderStyle.SINGLE, size: 1, color: 'CCCCCC' };
+  const CELL_MARGINS = { top: 80, bottom: 80, left: 120, right: 120 };
+  const borders = { top: BORDER, bottom: BORDER, left: BORDER, right: BORDER };
+
+  function makeCell(text: string, width: number, isHeader: boolean, rowIndex: number): TableCell {
+    return new TableCell({
+      width: { size: width, type: WidthType.DXA },
+      borders,
+      shading: {
+        type: ShadingType.CLEAR,
+        fill: isHeader ? HEADER_FILL : (rowIndex % 2 === 0 ? ROW_EVEN : ROW_ODD),
+      },
+      margins: CELL_MARGINS,
+      children: [new Paragraph({
+        children: [new TextRun({
+          text,
+          font: FONT,
+          size: 20,
+          bold: isHeader,
+          color: isHeader ? 'FFFFFF' : '000000',
+        })],
+      })],
+    });
+  }
+
+  // Header row
+  const headerRow = new TableRow({
+    children: HEADERS.map((h, i) => makeCell(h, COL_WIDTHS[i], true, -1)),
+  });
+
+  // Data rows
+  let hasArchivo = false;
+  const dataRows = fuentes.map((f, rowIdx) => {
+    const src = f as Record<string, unknown>;
+    if (src.archivo_url) hasArchivo = true;
+    const nombre = String(src.nombre_titulo ?? '');
+    const rol = String(src.rol_origen ?? '');
+    const estado = String(src.estado ?? '');
+    const confianza = String(src.confianza ?? '');
+    const url = String(src.url ?? '');
+    return new TableRow({
+      children: [
+        makeCell(nombre, COL_WIDTHS[0], false, rowIdx),
+        makeCell(rol, COL_WIDTHS[1], false, rowIdx),
+        makeCell(estado, COL_WIDTHS[2], false, rowIdx),
+        makeCell(confianza, COL_WIDTHS[3], false, rowIdx),
+        makeCell(url, COL_WIDTHS[4], false, rowIdx),
+      ],
+    });
+  });
+
+  const children: Paragraph[] = [];
+
+  children.push(new Paragraph({
+    heading: HeadingLevel.HEADING_1,
+    children: [new TextRun({ text: 'Fuentes del Expediente Forense', font: FONT, size: 32, bold: true })],
+  }));
+
+  children.push(new Paragraph({
+    spacing: { after: 200 },
+    children: [new TextRun({
+      text: `${publicId} — ${new Date().toLocaleDateString('es-CL')}`,
+      font: FONT, size: 18, color: '888888',
+    })],
+  }));
+
+  const tableChildren: (Paragraph | Table)[] = [...children];
+
+  tableChildren.push(new Table({
+    width: { size: 9026, type: WidthType.DXA },
+    rows: [headerRow, ...dataRows],
+  }));
+
+  if (hasArchivo) {
+    tableChildren.push(new Paragraph({
+      spacing: { before: 120 },
+      children: [new TextRun({ text: '(*) Fuente con archivo adjunto', font: FONT, size: 18, color: '888888' })],
+    }));
+  }
+
+  tableChildren.push(footerParagraph());
+
+  return new Document({
+    sections: [{
+      properties: {
+        page: { margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 } },
+      },
+      children: tableChildren,
+    }],
+  });
+}
+
+// ── Helper: hipotesis a Document ──
+function buildHipotesisDocx(
+  hipotesisData: Record<string, unknown>,
+  publicId: string,
+): Document {
+  const children: Paragraph[] = [];
+
+  children.push(new Paragraph({
+    heading: HeadingLevel.HEADING_1,
+    children: [new TextRun({ text: 'Hipotesis de Investigacion', font: FONT, size: 32, bold: true })],
+  }));
+
+  children.push(new Paragraph({
+    spacing: { after: 200 },
+    children: [new TextRun({
+      text: `${publicId} — ${new Date().toLocaleDateString('es-CL')}`,
+      font: FONT, size: 18, color: '888888',
+    })],
+  }));
+
+  // Hipotesis elegida (si existe)
+  const elegida = hipotesisData.hipotesis_elegida as Record<string, unknown> | undefined;
+  const hipotesisList = (() => {
+    const raw = hipotesisData as Record<string, unknown>;
+    const list = (raw.hipotesis ?? []) as unknown[];
+    return Array.isArray(list) ? list : [];
+  })();
+
+  // Si hay hipotesis elegida, mostrar como principal
+  const target = elegida ?? (hipotesisList[0] as Record<string, unknown> | undefined);
+
+  if (target) {
+    if (target.titulo) {
+      children.push(new Paragraph({
+        heading: HeadingLevel.HEADING_2,
+        spacing: { before: 120 },
+        children: [new TextRun({ text: String(target.titulo), font: FONT, size: 26, bold: true })],
+      }));
+    }
+
+    const fields: { label: string; key: string }[] = [
+      { label: 'Gancho periodistico', key: 'gancho' },
+      { label: 'Pregunta clave', key: 'pregunta_clave' },
+      { label: 'Tipo', key: 'tipo' },
+      { label: 'Audiencia objetivo', key: 'audiencia' },
+      { label: 'Nivel de riesgo', key: 'riesgo' },
+    ];
+
+    for (const f of fields) {
+      const val = target[f.key];
+      if (val) {
+        children.push(new Paragraph({
+          spacing: { before: 160, after: 60 },
+          children: [
+            new TextRun({ text: `${f.label}: `, font: FONT, size: 24, bold: true }),
+            new TextRun({ text: String(val), font: FONT, size: 24 }),
+          ],
+        }));
+      }
+    }
+
+    // Verificaciones criticas
+    const verificaciones = Array.isArray(target.verificaciones_criticas) ? target.verificaciones_criticas : [];
+    if (verificaciones.length > 0) {
+      children.push(new Paragraph({
+        heading: HeadingLevel.HEADING_2,
+        spacing: { before: 300 },
+        children: [new TextRun({ text: 'Verificaciones criticas', font: FONT, size: 26, bold: true })],
+      }));
+
+      verificaciones.forEach((v, idx) => {
+        children.push(new Paragraph({
+          numbering: { reference: 'verificaciones', level: 0 },
+          spacing: { after: 60 },
+          children: [new TextRun({ text: `${idx + 1}. ${String(v)}`, font: FONT, size: 24 })],
+        }));
+      });
+    }
+
+    // Evidencia requerida
+    if (target.evidencia_requerida) {
+      children.push(new Paragraph({
+        heading: HeadingLevel.HEADING_2,
+        spacing: { before: 300 },
+        children: [new TextRun({ text: 'Evidencia requerida', font: FONT, size: 26, bold: true })],
+      }));
+      children.push(new Paragraph({
+        spacing: { after: 120 },
+        children: [new TextRun({ text: String(target.evidencia_requerida), font: FONT, size: 24 })],
+      }));
+    }
+  }
+
+  children.push(footerParagraph());
+
+  return new Document({
+    numbering: {
+      config: [{
+        reference: 'verificaciones',
+        levels: [{
+          level: 0,
+          format: LevelFormat.DECIMAL,
+          text: '%1.',
+          alignment: AlignmentType.LEFT,
+        }],
+      }],
+    },
+    sections: [{
+      properties: {
+        page: { margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 } },
+      },
+      children,
+    }],
+  });
+}
+
+// ── Helper: stream a Buffer ──
+async function streamToBuffer(stream: ReadableStream): Promise<Buffer> {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value) chunks.push(value);
+  }
+  return Buffer.concat(chunks);
 }
 
 export async function POST(
@@ -122,41 +528,63 @@ export async function POST(
     const zip = new JSZip();
     const folder = zip.folder(prefix)!;
 
-    // 1. proyecto.json — data completa
+    // 1. borrador.docx — si existe
+    if (data.borrador && typeof data.borrador === 'object') {
+      const doc = buildBorradorDocx(
+        data.borrador as Record<string, unknown>,
+        prefix,
+        project.tenantName,
+        project.templateName,
+      );
+      const buf = await Packer.toBuffer(doc);
+      folder.file('borrador.docx', buf);
+    }
+
+    // 2. pitch.docx — si existe
+    if (data.pitch && typeof data.pitch === 'object') {
+      const doc = buildPitchDocx(
+        data.pitch as Record<string, unknown>,
+        prefix,
+        project.tenantName,
+        project.templateName,
+      );
+      const buf = await Packer.toBuffer(doc);
+      folder.file('pitch.docx', buf);
+    }
+
+    // 3. fuentes.docx — si existen
+    if (Array.isArray(data.fuentes) && data.fuentes.length > 0) {
+      const doc = buildFuentesDocx(data.fuentes, prefix);
+      const buf = await Packer.toBuffer(doc);
+      folder.file('fuentes.docx', buf);
+    }
+
+    // 4. hipotesis.docx — si existen
+    if (data.hipotesis && typeof data.hipotesis === 'object') {
+      const hipotesisInput = { ...(data.hipotesis as Record<string, unknown>) };
+      if (data.hipotesis_elegida) {
+        hipotesisInput.hipotesis_elegida = data.hipotesis_elegida;
+      }
+      const doc = buildHipotesisDocx(hipotesisInput, prefix);
+      const buf = await Packer.toBuffer(doc);
+      folder.file('hipotesis.docx', buf);
+    }
+
+    // 5. proyecto.json — data completa
     folder.file('proyecto.json', JSON.stringify(project, null, 2));
 
-    // 2. borrador.md — si existe
-    if (data.borrador && typeof data.borrador === 'object') {
-      folder.file('borrador.md', borradorToMarkdown(data.borrador as Record<string, unknown>));
-    }
-
-    // 3. pitch.md — si existe
-    if (data.pitch && typeof data.pitch === 'object') {
-      folder.file('pitch.md', pitchToMarkdown(data.pitch as Record<string, unknown>));
-    }
-
-    // 4. fuentes-odf.json — si existen
-    if (Array.isArray(data.fuentes) && data.fuentes.length > 0) {
-      folder.file('fuentes-odf.json', JSON.stringify(data.fuentes, null, 2));
-    }
-
-    // 5. hipotesis.json — si existen
-    if (data.hipotesis && typeof data.hipotesis === 'object') {
-      folder.file('hipotesis.json', JSON.stringify(data.hipotesis, null, 2));
-    }
-
-    // 6. imagen-visual — si existe (Chunk 20A, best-effort)
+    // 6. imagen-visual — si existe (via Vercel Blob SDK, best-effort)
     const imgData = data.imagen_visual as Record<string, unknown> | undefined;
     if (imgData && typeof imgData.url === 'string' && typeof imgData.nombre === 'string') {
       try {
-        const imgRes = await fetch(imgData.url as string);
-        if (imgRes.ok) {
-          const imgBuf = Buffer.from(await imgRes.arrayBuffer());
+        const blobResult = await blobGet(imgData.url as string, { access: 'private' });
+        if (blobResult && blobResult.stream) {
+          const imgBuf = await streamToBuffer(blobResult.stream);
           const ext = (imgData.nombre as string).split('.').pop()?.toLowerCase() ?? 'jpg';
           folder.file(`imagen-visual.${ext}`, imgBuf);
         }
       } catch (imgErr) {
-        console.warn('[export] imagen_visual fetch failed (best-effort):', imgErr);
+        console.warn('[export] imagen_visual blob get failed (best-effort):', imgErr);
       }
     }
 

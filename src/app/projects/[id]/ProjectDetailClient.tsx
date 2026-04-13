@@ -5387,20 +5387,6 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                         >
                           📋 Copiar al portapapeles
                         </button>
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            const ok = confirm(
-                              'Avanzar a la fase Visual. El borrador queda guardado y vas a poder volver. ¿Continuar?'
-                            );
-                            if (!ok) return;
-                            await handlePipelineAction('advance');
-                          }}
-                          disabled={actionLoading}
-                          className="bg-amber-brand hover:bg-amber-brand/90 disabled:bg-davy-gray/30 disabled:cursor-not-allowed text-oxford-blue text-sm font-semibold px-4 py-2 rounded transition-colors"
-                        >
-                          ➡️ Avanzar a Visual
-                        </button>
                       </div>
                     </div>
                   );

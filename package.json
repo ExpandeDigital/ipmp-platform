@@ -12,6 +12,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.87.0",
     "@vercel/blob": "^2.3.3",
+    "docx": "^9.6.1",
     "drizzle-orm": "0.38.3",
     "jszip": "^3.10.1",
     "mammoth": "^1.12.0",
