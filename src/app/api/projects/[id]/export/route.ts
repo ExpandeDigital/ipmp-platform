@@ -5,7 +5,6 @@
  *
  * Genera un ZIP en memoria con el contenido del project:
  *   [publicId]/borrador.docx     — borrador en Word
- *   [publicId]/pitch.docx        — pitch en Word
  *   [publicId]/fuentes.docx      — fuentes del ODF en tabla Word
  *   [publicId]/hipotesis.docx    — hipotesis en Word
  *   [publicId]/proyecto.json     — data completa del project
@@ -105,7 +104,7 @@ function footerParagraph(): Paragraph {
   });
 }
 
-// ── Helper: header meta lines for borrador/pitch ──
+// ── Helper: header meta lines for borrador ──
 function headerMeta(publicId: string, tenantName: string | null, templateName: string | null, fecha: string): Paragraph[] {
   const lines: string[] = [publicId];
   if (templateName && tenantName) lines.push(`${templateName} — ${tenantName}`);
@@ -209,87 +208,6 @@ function buildBorradorDocx(
       children.push(new Paragraph({
         spacing: { after: 60 },
         children: [new TextRun({ text: `• ${String(f)}`, font: FONT, size: 24 })],
-      }));
-    }
-  }
-
-  children.push(footerParagraph());
-
-  return new Document({
-    sections: [{
-      properties: {
-        page: { margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 } },
-      },
-      children,
-    }],
-  });
-}
-
-// ── Helper: pitch a Document ──
-function buildPitchDocx(
-  pitch: Record<string, unknown>,
-  publicId: string,
-  tenantName: string | null,
-  templateName: string | null,
-): Document {
-  const p = pitch.pitch as Record<string, unknown> | undefined;
-  const generadoEn = typeof pitch.generadoEn === 'string' ? pitch.generadoEn : '';
-
-  const children: Paragraph[] = [];
-
-  children.push(...headerMeta(publicId, tenantName, templateName, generadoEn));
-
-  // Titulo
-  children.push(new Paragraph({
-    heading: HeadingLevel.HEADING_1,
-    spacing: { before: 240 },
-    children: [new TextRun({ text: 'Pitch Editorial', font: FONT, size: 32, bold: true })],
-  }));
-
-  // Asunto
-  if (p?.asunto) {
-    children.push(new Paragraph({
-      border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: 'CCCCCC' } },
-      spacing: { after: 200 },
-      children: [
-        new TextRun({ text: 'Asunto: ', font: FONT, size: 24, bold: true }),
-        new TextRun({ text: String(p.asunto), font: FONT, size: 24 }),
-      ],
-    }));
-  }
-
-  // Cuerpo del pitch
-  if (pitch.texto_completo) {
-    const parrafos = String(pitch.texto_completo).split(/\n\n+/);
-    for (const parrafo of parrafos) {
-      const trimmed = parrafo.trim();
-      if (!trimmed) continue;
-      children.push(new Paragraph({
-        alignment: AlignmentType.JUSTIFIED,
-        spacing: { after: 120 },
-        children: [new TextRun({ text: trimmed, font: FONT, size: 24 })],
-      }));
-    }
-  }
-
-  // Detalles de envio
-  const detalles: { label: string; value: string }[] = [];
-  if (pitch.medio_destino) detalles.push({ label: 'Medio destino', value: String(pitch.medio_destino) });
-  if (pitch.notas_estrategicas) detalles.push({ label: 'Notas estrategicas', value: String(pitch.notas_estrategicas) });
-
-  if (detalles.length > 0) {
-    children.push(new Paragraph({
-      heading: HeadingLevel.HEADING_2,
-      spacing: { before: 360 },
-      children: [new TextRun({ text: 'Detalles de envio', font: FONT, size: 26, bold: true })],
-    }));
-    for (const d of detalles) {
-      children.push(new Paragraph({
-        spacing: { after: 80 },
-        children: [
-          new TextRun({ text: `${d.label}: `, font: FONT, size: 24, bold: true }),
-          new TextRun({ text: d.value, font: FONT, size: 24 }),
-        ],
       }));
     }
   }
@@ -580,26 +498,14 @@ export async function POST(
       folder.file(buildNombreArchivo(templateName, tituloDoc, 'Borrador', 'docx'), buf);
     }
 
-    // 2. pitch.docx — si existe
-    if (data.pitch && typeof data.pitch === 'object') {
-      const doc = buildPitchDocx(
-        data.pitch as Record<string, unknown>,
-        prefix,
-        project.tenantName,
-        project.templateName,
-      );
-      const buf = await Packer.toBuffer(doc);
-      folder.file(buildNombreArchivo(templateName, null, 'Pitch editorial', 'docx'), buf);
-    }
-
-    // 3. fuentes.docx — si existen
+    // 2. fuentes.docx — si existen
     if (Array.isArray(data.fuentes) && data.fuentes.length > 0) {
       const doc = buildFuentesDocx(data.fuentes, prefix);
       const buf = await Packer.toBuffer(doc);
       folder.file(buildNombreArchivo(templateName, null, 'Fuentes del expediente', 'docx'), buf);
     }
 
-    // 4. hipotesis.docx — si existen
+    // 3. hipotesis.docx — si existen
     if (data.hipotesis && typeof data.hipotesis === 'object') {
       const hipotesisInput = { ...(data.hipotesis as Record<string, unknown>) };
       if (data.hipotesis_elegida) {
@@ -610,10 +516,10 @@ export async function POST(
       folder.file(buildNombreArchivo(templateName, null, 'Hipotesis de investigacion', 'docx'), buf);
     }
 
-    // 5. proyecto.json — data completa
+    // 4. proyecto.json — data completa
     folder.file('proyecto.json', JSON.stringify(project, null, 2));
 
-    // 6. imagen-visual — si existe (via Vercel Blob SDK, best-effort)
+    // 5. imagen-visual — si existe (via Vercel Blob SDK, best-effort)
     const imgData = data.imagen_visual as Record<string, unknown> | undefined;
     if (imgData && typeof imgData.url === 'string' && typeof imgData.nombre === 'string') {
       try {
