@@ -40,6 +40,21 @@ function evaluateExportGate(
   data: Record<string, unknown>
 ): { passed: boolean; conditions: ExportCondition[] } {
   const borrador = data.borrador as Record<string, unknown> | undefined;
+
+  if (!borrador) {
+    return {
+      passed: false,
+      conditions: [
+        {
+          id: 'C0',
+          passed: false,
+          descripcion: 'No existe borrador generado por la plataforma. ' +
+            'Genera el borrador en la fase Produccion antes de exportar.',
+        },
+      ],
+    };
+  }
+
   const metadata = borrador?.metadata as Record<string, unknown> | undefined;
   const pitch = data.pitch as Record<string, unknown> | undefined;
   const validaciones = (data.validaciones_borrador as unknown[]) ?? [];
@@ -85,7 +100,13 @@ function evaluateExportGate(
     {
       id: 'C5',
       passed: !!pitchFecha && !!borradorFecha && pitchFecha > borradorFecha,
-      descripcion: 'El pitch debe haberse generado despues del borrador actual',
+      descripcion: !pitchFecha
+        ? 'El pitch no ha sido generado. Genera el pitch antes de exportar.'
+        : !borradorFecha
+        ? 'El borrador no tiene fecha de generacion registrada.'
+        : pitchFecha > borradorFecha
+        ? 'Pitch generado despues del borrador.'
+        : 'El pitch fue generado antes del borrador actual. Regenera el pitch.',
     },
   ];
 
