@@ -774,7 +774,7 @@ no esta justificada para el volumen actual.
   (C) Tab pitch movido de PHASE_CONFIG.produccion a
   PHASE_CONFIG.visual, despues del Generador de Prompt Visual.
 
-- **18G** `[HASH]` docs(chunk18g): cierre documental Chunk 18.
+- **18G** `34947f6` docs(chunk18g): cierre documental Chunk 18.
 
 Decision arquitectonica registrada: el flujo canonico IPMP
 queda establecido en el Chunk 18 como cadena unidireccional
