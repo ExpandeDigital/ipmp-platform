@@ -198,6 +198,7 @@ export const consumptionLogs = pgTable('consumption_logs', {
 export const tenantsRelations = relations(tenants, ({ many }) => ({
   projects: many(projects),
   consumptionLogs: many(consumptionLogs),
+  tenantAssets: many(tenantAssets),
 }));
 
 export const projectsRelations = relations(projects, ({ one, many }) => ({
@@ -238,3 +239,32 @@ export const editoresAgenda = pgTable('editores_agenda', {
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
+
+// =====================================================
+// TENANT ASSETS — Asset Library per tenant (Chunk 17A)
+// =====================================================
+export const tenantAssets = pgTable('tenant_assets', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  tenantId: uuid('tenant_id')
+    .notNull()
+    .references(() => tenants.id),
+  nombre: text('nombre').notNull(),
+  blob_url: text('blob_url').notNull(),
+  blob_pathname: text('blob_pathname'),
+  blob_size: integer('blob_size'),
+  mime_type: text('mime_type'),
+  declaracion_ia: boolean('declaracion_ia').notNull().default(false),
+  alt_text: text('alt_text').notNull(),
+  origen: text('origen').notNull(),
+  activo: boolean('activo').notNull().default(true),
+  version: integer('version').notNull().default(1),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+});
+
+export const tenantAssetsRelations = relations(tenantAssets, ({ one }) => ({
+  tenant: one(tenants, {
+    fields: [tenantAssets.tenantId],
+    references: [tenants.id],
+  }),
+}));

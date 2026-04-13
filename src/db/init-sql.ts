@@ -179,4 +179,27 @@ CREATE TABLE IF NOT EXISTS editores_agenda (
 
 CREATE INDEX IF NOT EXISTS idx_editores_activo ON editores_agenda(activo);
 CREATE INDEX IF NOT EXISTS idx_editores_tier ON editores_agenda(tier);
+
+-- =====================================================
+-- TENANT ASSETS — Asset Library per tenant (Chunk 17A)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS tenant_assets (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id       UUID NOT NULL REFERENCES tenants(id),
+  nombre          TEXT NOT NULL,
+  blob_url        TEXT NOT NULL,
+  blob_pathname   TEXT,
+  blob_size       INTEGER,
+  mime_type       TEXT,
+  declaracion_ia  BOOLEAN NOT NULL DEFAULT false,
+  alt_text        TEXT NOT NULL,
+  origen          TEXT NOT NULL,
+  activo          BOOLEAN NOT NULL DEFAULT true,
+  version         INTEGER NOT NULL DEFAULT 1,
+  created_at      TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_tenant_assets_tenant ON tenant_assets(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_tenant_assets_activo ON tenant_assets(activo);
 `;
