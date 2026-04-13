@@ -784,15 +784,15 @@ de artefactos con gates obligatorios en cada transicion:
     → fuentes ODF con archivos adjuntos
     → borrador IP (generado por la plataforma desde los archivos)
     → [gate BORRADOR_IP_REQUIRED]
+    → validacion IP (score >= 3.5 para exportar)
     → traspaso: operador elige marca + genero
     → [gate TRASPASO_REQUIRED]
     → borrador MP (toma IP como base, aplica genero y marca)
-    → validacion definitiva
-    → aprobado
-    → prompt visual + pitch
-    → [gate EXPORT_GATE_FAILED: 5 condiciones]
-    → exportado: ZIP con borrador.md + pitch.md generados
-      por la plataforma con tratamiento periodistico real
+    → revision (informativa: muestra score IP)
+    → aprobado → Vista Previa
+    → prompt visual + imagen externa
+    → [gate EXPORT_GATE_FAILED: 4 condiciones C1-C4]
+    → exportado: ZIP con 3 .docx + imagen + proyecto.json
 
 Cada artefacto tiene un consumidor rio abajo, nunca rio arriba.
 El operador decide cuando generar cada artefacto y firma cada
@@ -984,11 +984,6 @@ protegidas sin sistema de login.
 - Filtros en listado de proyectos (Chunk 22): filtro por
   status, tenantId y busqueda por titulo. Editor elegido
   incluido en pitch.docx del ZIP.
-
-- Validador IP persistencia + soft gate (Chunk 23):
-  data.validaciones_ip[], historial de iteraciones,
-  soft gate si score < 3.0 antes del traspaso, advertencia
-  si borrador IP esta en modo diagnostico al traspasar.
 
 - verificaciones_criticas como sistema real (Chunk 24):
   estados persistidos (pendiente/en_curso/confirmada/
@@ -1392,3 +1387,129 @@ pitch. La seccion se omite silenciosamente si el campo esta
 vacio. No se realizaron cambios de codigo. El feature funciona
 correctamente cuando el operador tiene editores cargados en
 la Agenda y genera el pitch con un editor asignado.
+
+### Chunk 23 — Validador IP persistencia, historial y soft gate [COMPLETADO 13 abril 2026]
+
+- **23A** [COMMIT_23A] feat(chunk23a): persistencia validaciones_ip
+  en data del proyecto. Interface ValidacionIPEntry (generadoEn,
+  score, apto_para_traspaso, dimensiones[], recomendaciones[]).
+  PATCH endpoint acepta validacionesIp via merge de body.data.
+  handleValidarBorradorIP hace append al array acumulativo.
+  Fire-and-forget: fallo de PATCH loguea con console.error pero
+  no bloquea el UX. 23A y 23B commiteados juntos.
+
+- **23B** [COMMIT_23AB] feat(chunk23b): historial de iteraciones
+  Validador IP. Panel colapsable "Historial (N corridas)" en tab
+  Validador IP. Orden cronologico inverso. Fila compacta: fecha
+  formateada, score con color verde/rojo segun umbral 3.0, badge
+  Apto/No apto. Sin renderizado si array vacio.
+
+- **23C** [COMMIT_23C] feat(chunk23c): soft gate pre-traspaso.
+  Banner amber con checkbox de confirmacion si score < 3.0 o sin
+  validar; boton Confirmar deshabilitado hasta ack del operador.
+  Banner blue informativo si borrador_ip en modo diagnostico.
+  Estado traspasoScoreAck resetea al abrir el modal.
+
+- **23G** [COMMIT_23G] docs(chunk23g): cierre documental Chunk 23.
+
+Decision arquitectonica registrada: el soft gate del traspaso es
+un gate informado, no un hard block. El operador puede traspasar
+con score bajo pero firma la decision con un checkbox explicito.
+Esto implementa el Principio 2 de filantropia digital (honestidad
+sobre los limites del producto) sin quitarle autonomia editorial
+al operador. Los hard blocks (BORRADOR_IP_REQUIRED, TRASPASO_REQUIRED)
+protegen la integridad del pipeline; los soft gates protegen la
+calidad sin reemplazar el juicio humano.
+
+## Hallazgos de validacion — Chunk 23 (13 abril 2026)
+
+### a) validaciones_ip como primer array acumulativo del pipeline
+
+Los artefactos anteriores del pipeline (borrador_ip, borrador,
+pitch, etc.) son documentos singulares que se sobreescriben.
+data.validaciones_ip[] es el primer artefacto acumulativo: cada
+corrida agrega una entrada, nunca reemplaza. Este patron es
+distinto al de los demas campos de data y puede servir como modelo
+para futuros historiales (ej: historial de scores del validador MP,
+historial de borradores). La decision de agregar en vez de reemplazar
+es deliberada: el operador necesita ver la evolucion del score entre
+iteraciones de fuentes para entender el impacto de cada carga de
+evidencia.
+
+### b) El soft gate de score resuelve el tension entre calidad y autonomia
+
+Los gates anteriores del pipeline son hard blocks que el operador
+no puede bypasear sin cumplir la condicion (BORRADOR_IP_REQUIRED,
+TRASPASO_REQUIRED, EXPORT_GATE_FAILED). El soft gate de score del
+Chunk 23 introduce una categoria nueva: condicion recomendada pero
+no obligatoria, con firma explicita del operador. El checkbox de
+confirmacion es la traduccion tecnica del principio de que la
+plataforma asiste al operador, no automatiza sus decisiones. Un
+score de 2.8/5.0 puede ser aceptable para un genero de opinion; un
+score de 2.8/5.0 es insuficiente para un reportaje de investigacion.
+El operador sabe cual es cual; la plataforma solo asegura que la
+decision sea consciente.
+
+### Chunk 24 — Eliminacion Pitch, Validador MP y reemplazo C4 [COMPLETADO 13 abril 2026]
+
+- **24A** `c66fdf8` feat(chunk24a): C4 del gate usa validaciones_ip,
+  eliminar C5. C4 ahora lee el ultimo entry de data.validaciones_ip
+  (score >= 3.5). Mensaje descriptivo actualizado. C5 (pitch posterior
+  al borrador) eliminada — el gate queda con 4 condiciones (C1-C4).
+
+- **24B** `ab6b872` feat(chunk24b): eliminar tab Validador de Tono MP
+  de fase revision. Tab reemplazado por panel informativo que muestra
+  el ultimo score IP. Estados borradorTexto, validandoBorrador,
+  borradorError eliminados. useEffect prefill y handler
+  handleValidarBorrador eliminados. Historial validaciones_borrador
+  y handlers de curacion conservados por datos historicos existentes.
+
+- **24C** `44826b2` feat(chunk24c): eliminar Constructor de Pitch de
+  UI (fase visual) y pitch.docx del ZIP. 13 estados React eliminados,
+  2 useEffects, 2 handlers (handleConstruirPitch, handleElegirEditor).
+  buildPitchDocx eliminado de export/route.ts. ZIP queda con 3 .docx
+  (borrador, fuentes, hipotesis) + proyecto.json + imagen-visual.
+
+- **24G** [PENDIENTE] docs(chunk24g): cierre documental Chunk 24.
+
+Decision arquitectonica registrada: el Validador IP (pesquisa) es
+el unico validador del pipeline. Su score rige C4 del gate de
+exportacion (umbral >= 3.5). El Validador de Tono MP y el
+Constructor de Pitch son eliminados por no agregar valor operativo
+real al flujo canonico. El pipeline queda mas corto y directo:
+pesquisa (con validacion IP) -> traspaso -> produccion -> revision
+(informativa) -> aprobado -> visual -> exportado. El ZIP exportado
+contiene 3 artefactos editoriales en lugar de 4.
+
+## Hallazgos de validacion — Chunk 24 (13 abril 2026)
+
+### a) El Validador IP absorbe la responsabilidad de calidad del pipeline
+
+La eliminacion del Validador de Tono MP concentra la validacion de
+calidad en la fase pesquisa, antes del traspaso. Esto es coherente
+con la arquitectura del Chunk 18: si el borrador IP es solido, el
+borrador MP hereda esa solidez. Validar despues del traspaso era
+redundante y creaba confusion operativa (dos validadores con
+criterios distintos).
+
+### b) El Pitch era el artefacto con menor trazabilidad del pipeline
+
+El Constructor de Pitch operaba sobre el borrador pero producia un
+documento de naturaleza comercial (propuesta a editor) desacoplado
+del rigor periodistico del expediente. Su eliminacion simplifica el
+ZIP a 3 artefactos puramente editoriales y elimina la condicion C5
+del gate, que era la mas dificil de satisfacer automaticamente.
+
+### c) Flujo canonico actualizado post-Chunk 24
+
+  hipotesis elegida
+    -> fuentes ODF con archivos adjuntos
+    -> borrador IP [gate BORRADOR_IP_REQUIRED]
+    -> validacion IP (score >= 3.5 para exportar)
+    -> traspaso: marca + genero [gate TRASPASO_REQUIRED]
+    -> borrador MP (toma IP como base)
+    -> revision (informativa: muestra score IP)
+    -> aprobado -> Vista Previa
+    -> prompt visual + imagen externa
+    -> [gate EXPORT_GATE_FAILED: 4 condiciones C1-C4]
+    -> exportado: ZIP con 3 .docx + imagen + proyecto.json
