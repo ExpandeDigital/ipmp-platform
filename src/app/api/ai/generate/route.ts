@@ -27,6 +27,8 @@ import { trackUsage } from '@/lib/ai/usage-tracker';
 
 export const dynamic = 'force-dynamic';
 
+const NO_CACHE_HEADERS = { 'Cache-Control': 'no-store' } as const;
+
 // ── Tipos de request ─────────────────────────────────
 interface GenerateRequest {
   tool: string;
@@ -72,7 +74,7 @@ export async function POST(request: NextRequest) {
         {
           error: 'Campos requeridos: tool, userMessage (max 120.000 chars)',
         },
-        { status: 400 }
+        { status: 400, headers: NO_CACHE_HEADERS }
       );
     }
 
@@ -82,7 +84,7 @@ export async function POST(request: NextRequest) {
     if (!VALID_TOOLS.includes(tool as ToolName)) {
       return NextResponse.json(
         { error: `Herramienta desconocida: ${tool}. Disponibles: ${VALID_TOOLS.join(', ')}` },
-        { status: 400 }
+        { status: 400, headers: NO_CACHE_HEADERS }
       );
     }
 
@@ -96,7 +98,7 @@ export async function POST(request: NextRequest) {
         {
           error: `La herramienta ${toolName} requiere tenantSlug y templateSlug. Solo opera en modo MetricPress (fase produccion en adelante).`,
         },
-        { status: 400 }
+        { status: 400, headers: NO_CACHE_HEADERS }
       );
     }
 
@@ -117,7 +119,7 @@ export async function POST(request: NextRequest) {
       if (!tenant) {
         return NextResponse.json(
           { error: `Tenant no encontrado: ${tenantSlug}` },
-          { status: 404 }
+          { status: 404, headers: NO_CACHE_HEADERS }
         );
       }
 
@@ -130,7 +132,7 @@ export async function POST(request: NextRequest) {
       if (!template) {
         return NextResponse.json(
           { error: `Plantilla no encontrada: ${templateSlug}` },
-          { status: 404 }
+          { status: 404, headers: NO_CACHE_HEADERS }
         );
       }
 
@@ -257,7 +259,7 @@ export async function POST(request: NextRequest) {
       usage: result.usage,
       model: result.model,
       durationMs: result.durationMs,
-    });
+    }, { headers: NO_CACHE_HEADERS });
   } catch (error) {
     console.error('[/api/ai/generate] Error:', error);
 
@@ -267,13 +269,13 @@ export async function POST(request: NextRequest) {
     if (message.includes('ANTHROPIC_API_KEY')) {
       return NextResponse.json(
         { error: 'API key de Anthropic no configurada. Revisá Environment Variables en Vercel.' },
-        { status: 500 }
+        { status: 500, headers: NO_CACHE_HEADERS }
       );
     }
 
     return NextResponse.json(
       { error: message },
-      { status: 500 }
+      { status: 500, headers: NO_CACHE_HEADERS }
     );
   }
 }

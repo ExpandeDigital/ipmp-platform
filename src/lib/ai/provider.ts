@@ -63,6 +63,39 @@ const DEFAULT_MODEL = 'claude-sonnet-4-20250514';
 const DEFAULT_MAX_TOKENS = 4096;
 const DEFAULT_TEMPERATURE = 0.7;
 
+// ─── Retry con backoff exponencial para overloaded_error (529) ───
+const RETRY_MAX = 3;
+const RETRY_BASE_MS = 1000;
+
+function isOverloadedError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const e = err as Record<string, unknown>;
+  if (e['status'] === 529) return true;
+  const inner = e['error'] as Record<string, unknown> | undefined;
+  if (inner?.['type'] === 'overloaded_error') return true;
+  if (typeof e['message'] === 'string' && e['message'].includes('overloaded')) return true;
+  return false;
+}
+
+async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= RETRY_MAX; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err;
+      if (!isOverloadedError(err) || attempt === RETRY_MAX) throw err;
+      const delayMs = RETRY_BASE_MS * Math.pow(2, attempt);
+      console.warn(
+        `[provider] Anthropic overloaded_error (529) — reintento ${attempt + 1}/${RETRY_MAX} en ${delayMs}ms`
+      );
+      await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  throw lastError;
+}
+// ────────────────────────────────────────────────────────────────
+
 // ── Función principal ────────────────────────────────
 export async function generate(options: GenerateOptions): Promise<GenerateResult> {
   const {
@@ -77,13 +110,13 @@ export async function generate(options: GenerateOptions): Promise<GenerateResult
   const start = Date.now();
 
   try {
-    const response = await client.messages.create({
+    const response = await withRetry(() => client.messages.create({
       model,
       max_tokens: maxTokens,
       temperature,
       system,
       messages: [{ role: 'user', content: userMessage }],
-    });
+    }));
 
     // Extraer texto de los content blocks
     const text = response.content
