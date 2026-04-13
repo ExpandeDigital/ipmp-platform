@@ -260,7 +260,8 @@ interface BorradorMetadata {
 }
 
 interface BorradorData {
-  borrador: BorradorBody;
+  contenido: BorradorBody;       // Chunk 19D: clave nueva (escritura nueva)
+  borrador?: BorradorBody;       // clave vieja (solo lectura legacy, no escribir)
   metadata: BorradorMetadata;
   notas_editoriales: string;
   generadoEn: string;
@@ -580,10 +581,11 @@ function parseFuenteFromRaw(f: Record<string, unknown>): Fuente {
 function parseBorradorFromRaw(raw: Record<string, unknown>): BorradorData | null {
   if (!raw || typeof raw !== 'object') return null;
 
-  const borradorRaw = raw.borrador as Record<string, unknown> | undefined;
-  if (!borradorRaw || typeof borradorRaw !== 'object') return null;
+  // Chunk 19D: lectura dual — clave nueva 'contenido' tiene prioridad sobre 'borrador' (legacy)
+  const contenidoRaw = (raw.contenido ?? raw.borrador) as Record<string, unknown> | undefined;
+  if (!contenidoRaw || typeof contenidoRaw !== 'object') return null;
 
-  const cuerpoRaw = Array.isArray(borradorRaw.cuerpo) ? borradorRaw.cuerpo : [];
+  const cuerpoRaw = Array.isArray(contenidoRaw.cuerpo) ? contenidoRaw.cuerpo : [];
   const cuerpo: BorradorSeccion[] = cuerpoRaw.map((s) => {
     const sec = s as Record<string, unknown>;
     return {
@@ -592,12 +594,12 @@ function parseBorradorFromRaw(raw: Record<string, unknown>): BorradorData | null
     };
   });
 
-  const borrador: BorradorBody = {
-    titulo: typeof borradorRaw.titulo === 'string' ? borradorRaw.titulo : 'Sin titulo',
-    bajada: typeof borradorRaw.bajada === 'string' ? borradorRaw.bajada : '',
-    lead: typeof borradorRaw.lead === 'string' ? borradorRaw.lead : '',
+  const contenido: BorradorBody = {
+    titulo: typeof contenidoRaw.titulo === 'string' ? contenidoRaw.titulo : 'Sin titulo',
+    bajada: typeof contenidoRaw.bajada === 'string' ? contenidoRaw.bajada : '',
+    lead: typeof contenidoRaw.lead === 'string' ? contenidoRaw.lead : '',
     cuerpo,
-    cierre: typeof borradorRaw.cierre === 'string' ? borradorRaw.cierre : '',
+    cierre: typeof contenidoRaw.cierre === 'string' ? contenidoRaw.cierre : '',
   };
 
   const metadataRaw = (raw.metadata ?? {}) as Record<string, unknown>;
@@ -627,21 +629,22 @@ function parseBorradorFromRaw(raw: Record<string, unknown>): BorradorData | null
   const notasOperador = typeof raw.notasOperador === 'string' ? raw.notasOperador : undefined;
   const modo = typeof raw.modo === 'string' ? raw.modo : undefined;
 
-  return { borrador, metadata, notas_editoriales: notas, generadoEn, notasOperador, modo };
+  return { contenido, metadata, notas_editoriales: notas, generadoEn, notasOperador, modo };
 }
 
 // Chunk 19B: construye texto plano del borrador para el Validador de Tono
 // y para el botón "Copiar al portapapeles". Reutilizable.
 function buildBorradorTextoPlano(data: BorradorData): string {
+  const c = data.contenido;
   const partes: string[] = [];
-  if (data.borrador.titulo) partes.push(data.borrador.titulo);
-  if (data.borrador.bajada) partes.push(data.borrador.bajada);
-  if (data.borrador.lead) partes.push(data.borrador.lead);
-  data.borrador.cuerpo.forEach((sec) => {
+  if (c.titulo) partes.push(c.titulo);
+  if (c.bajada) partes.push(c.bajada);
+  if (c.lead) partes.push(c.lead);
+  c.cuerpo.forEach((sec) => {
     if (sec.subtitulo) partes.push(sec.subtitulo);
     sec.parrafos.forEach((p) => partes.push(p));
   });
-  if (data.borrador.cierre) partes.push(data.borrador.cierre);
+  if (c.cierre) partes.push(c.cierre);
   return partes.join('\n\n');
 }
 
@@ -1411,16 +1414,16 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
         if (ipParsed) {
           userMessage += `BORRADOR IP VERIFICADO (InvestigaPress)\n`;
           userMessage += `Este documento fue generado en la fase de pesquisa a partir de las fuentes verificadas del expediente. Usarlo como base y fuente de verdad prioritaria. Aplicar sobre el el genero, la voz y la estructura del template ${project.templateName ?? ''} de ${project.tenantName ?? ''}. No fabricar datos que no esten en este documento.\n\n`;
-          userMessage += `${ipParsed.borrador.titulo}\n`;
-          if (ipParsed.borrador.bajada) userMessage += `${ipParsed.borrador.bajada}\n`;
-          userMessage += `\n${ipParsed.borrador.lead}\n\n`;
-          ipParsed.borrador.cuerpo.forEach((sec) => {
+          userMessage += `${ipParsed.contenido.titulo}\n`;
+          if (ipParsed.contenido.bajada) userMessage += `${ipParsed.contenido.bajada}\n`;
+          userMessage += `\n${ipParsed.contenido.lead}\n\n`;
+          ipParsed.contenido.cuerpo.forEach((sec) => {
             if (sec.subtitulo) userMessage += `## ${sec.subtitulo}\n`;
             sec.parrafos.forEach((p) => {
               userMessage += `${p}\n\n`;
             });
           });
-          if (ipParsed.borrador.cierre) userMessage += `${ipParsed.borrador.cierre}\n\n`;
+          if (ipParsed.contenido.cierre) userMessage += `${ipParsed.contenido.cierre}\n\n`;
           if (ipParsed.metadata.fuentes_citadas.length > 0) {
             userMessage += `Fuentes citadas en el IP: ${ipParsed.metadata.fuentes_citadas.join(', ')}\n`;
           }
@@ -1977,7 +1980,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
     }
 
     const borradorParsed = parseBorradorFromRaw(borradorRaw);
-    if (!borradorParsed || !borradorParsed.borrador.titulo) {
+    if (!borradorParsed || !borradorParsed.contenido.titulo) {
       setPitchError(
         'El borrador guardado no tiene estructura valida. Regenera el borrador antes de construir el pitch.'
       );
@@ -1988,7 +1991,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
     setPitchError(null);
 
     // Construir userMessage desde el borrador completo
-    const b = borradorParsed.borrador;
+    const b = borradorParsed.contenido;
     const m = borradorParsed.metadata;
 
     let userMessage = `BORRADOR VALIDADO:\n`;
@@ -2095,7 +2098,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
     }
 
     const borradorParsed = parseBorradorFromRaw(borradorRaw);
-    if (!borradorParsed || !borradorParsed.borrador.titulo) {
+    if (!borradorParsed || !borradorParsed.contenido.titulo) {
       setGenPromptVisualError(
         'El borrador guardado no tiene estructura valida. Regenera el borrador antes de continuar.'
       );
@@ -2112,7 +2115,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
     setGenerandoPromptVisual(true);
     setGenPromptVisualError(null);
 
-    const b = borradorParsed.borrador;
+    const b = borradorParsed.contenido;
     const m = borradorParsed.metadata;
 
     let userMessage = `BORRADOR APROBADO:\n`;
@@ -3988,7 +3991,8 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                 {(() => {
                   const dataObj = (project?.data ?? {}) as Record<string, unknown>;
                   const borrRaw = dataObj.borrador as Record<string, unknown> | undefined;
-                  const hasBorrador = !!borrRaw && typeof borrRaw === 'object' && !!(borrRaw as Record<string, unknown>).titulo;
+                  const borrContenido = ((borrRaw as Record<string, unknown>)?.contenido ?? (borrRaw as Record<string, unknown>)?.borrador) as Record<string, unknown> | undefined;
+                  const hasBorrador = !!borrContenido && typeof borrContenido === 'object' && !!borrContenido.titulo;
                   if (!hasBorrador) {
                     return (
                       <div className="bg-red-500/10 border border-red-500/40 rounded p-4 mb-4">
@@ -4006,7 +4010,7 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                   return (
                     <div className="bg-green-500/10 border border-green-500/30 rounded p-3 mb-4">
                       <p className="text-green-400 text-xs">
-                        Borrador disponible: <span className="font-medium text-seasalt">{String((borrRaw as Record<string, unknown>).titulo ?? '')}</span>
+                        Borrador disponible: <span className="font-medium text-seasalt">{String(borrContenido.titulo ?? '')}</span>
                       </p>
                     </div>
                   );
@@ -4324,26 +4328,26 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                           {/* Titulo + bajada */}
                           <div className="bg-oxford-blue/50 rounded-lg border border-davy-gray/20 p-5">
                             <h3 className="text-seasalt text-xl font-bold mb-2">
-                              {borradorIPParsed.borrador.titulo}
+                              {borradorIPParsed.contenido.titulo}
                             </h3>
-                            {borradorIPParsed.borrador.bajada && (
+                            {borradorIPParsed.contenido.bajada && (
                               <p className="text-davy-gray text-sm italic">
-                                {borradorIPParsed.borrador.bajada}
+                                {borradorIPParsed.contenido.bajada}
                               </p>
                             )}
                           </div>
 
                           {/* Lead */}
-                          {borradorIPParsed.borrador.lead && (
+                          {borradorIPParsed.contenido.lead && (
                             <div className="bg-amber-brand/5 border-l-2 border-amber-brand/40 px-4 py-3">
                               <p className="text-seasalt text-sm leading-relaxed">
-                                {borradorIPParsed.borrador.lead}
+                                {borradorIPParsed.contenido.lead}
                               </p>
                             </div>
                           )}
 
                           {/* Cuerpo */}
-                          {borradorIPParsed.borrador.cuerpo.map((sec, idx) => (
+                          {borradorIPParsed.contenido.cuerpo.map((sec, idx) => (
                             <div key={idx} className="space-y-2">
                               {sec.subtitulo && (
                                 <h4 className="text-amber-brand/80 font-semibold text-sm">
@@ -4359,10 +4363,10 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                           ))}
 
                           {/* Cierre */}
-                          {borradorIPParsed.borrador.cierre && (
+                          {borradorIPParsed.contenido.cierre && (
                             <div className="border-t border-davy-gray/20 pt-4">
                               <p className="text-seasalt/80 text-sm leading-relaxed italic">
-                                {borradorIPParsed.borrador.cierre}
+                                {borradorIPParsed.contenido.cierre}
                               </p>
                             </div>
                           )}
@@ -4466,7 +4470,7 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                   }
 
                   const parsedIP19c = parseBorradorFromRaw(borradorIPRaw19c);
-                  const tituloIP = parsedIP19c?.borrador?.titulo ?? 'Sin titulo';
+                  const tituloIP = parsedIP19c?.contenido?.titulo ?? 'Sin titulo';
                   const modoIP = parsedIP19c?.modo ?? null;
                   const textoEsperadoIP = parsedIP19c ? buildBorradorTextoPlano(parsedIP19c) : null;
                   const textoDifiereIP = textoEsperadoIP !== null && ipValidadorTexto.trim() !== textoEsperadoIP.trim();
@@ -5026,7 +5030,7 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                     );
                   }
 
-                  const { borrador, metadata, notas_editoriales, generadoEn } = parsed;
+                  const { contenido: borrador, metadata, notas_editoriales, generadoEn } = parsed;
 
                   // Chunk 12C: banner de borrador desactualizado
                   const bannerDesactualizado = parsed.desactualizado === true;
@@ -5319,7 +5323,8 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                   const pitchRaw = dataObj.pitch as Record<string, unknown> | undefined;
                   const promptVisualRaw = dataObj.prompt_visual as Record<string, unknown> | undefined;
                   const hasBorrador = borradorRaw && typeof borradorRaw === 'object';
-                  const borradorTitulo = hasBorrador ? String((borradorRaw as Record<string, unknown>).titulo ?? '') : '';
+                  const borrContenidoExport = hasBorrador ? ((borradorRaw as Record<string, unknown>).contenido ?? (borradorRaw as Record<string, unknown>).borrador) as Record<string, unknown> | undefined : undefined;
+                  const borradorTitulo = borrContenidoExport ? String(borrContenidoExport.titulo ?? '') : '';
                   const medioDestino = pitchRaw ? String(pitchRaw.medio_destino ?? '') : '';
 
                   return (

@@ -55,7 +55,8 @@ async function findProjectForExport(id: string) {
 
 // ── Helper: borrador a markdown ──
 function borradorToMarkdown(borrador: Record<string, unknown>): string {
-  const b = borrador.borrador as Record<string, unknown> | undefined;
+  // Chunk 19D: lectura dual — clave nueva 'contenido' tiene prioridad sobre 'borrador' (legacy)
+  const b = (borrador.contenido ?? borrador.borrador) as Record<string, unknown> | undefined;
   if (!b) return '# (borrador sin estructura)\n';
 
   const lines: string[] = [];
