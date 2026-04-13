@@ -813,42 +813,128 @@ completa: IP produce el periodismo puro sin marca, MP produce
 el insumo final con marca y genero. El traspaso es el momento
 de la decision editorial, no de la creacion.
 
-### Chunk 19+ — Futuros (sin orden definitivo)
+### Chunk 19 — UX polish, integridad del validador, validador IP, deuda tecnica [COMPLETADO 13 abril 2026]
 
-- Validador de Tono accesible en fase pesquisa pre-traspaso:
-  el operador obtiene score ejecutivo del borrador IP antes
-  de decidir el traspaso. Hoy el validador vive solo en
-  revision (MetricPress).
+- **19A** `25334f9` feat(chunk19a): UX polish — template descriptions,
+  thesis subordination, pitch-stale badge. Tres cambios en
+  ProjectDetailClient.tsx: (1) constante TEMPLATE_DESCRIPTIONS con
+  13 slugs reales del seed-data, descripcion renderizada bajo el
+  select de template en el modal de traspaso. (2) thesis subordinada
+  con opacity-50 cuando existe hipotesis_elegida, badge verde "Activa"
+  en hipotesis elegida, cuatro ramas de renderizado. (3) banner amber
+  informativo en el tab de pitch cuando pitch.generadoEn < borrador.generadoEn,
+  sin bloquear el form.
 
-- Bloqueo del Validador de Borrador cuando no existe borrador
-  interno: hoy el validador acepta cualquier texto pegado,
-  incluyendo evaluaciones externas que no son el borrador.
-  Agregar verificacion de que texto_analizado corresponde
-  al borrador activo del proyecto.
+- **19B** `5eb62ba` feat(chunk19b): validador binding borrador activo —
+  prefill, banner divergencia, restaurar. Helper buildBorradorTextoPlano()
+  extraido como funcion reutilizable (reemplaza inline del boton copiar).
+  useEffect prefill de borradorTexto desde MP -> IP -> vacio con dep
+  [project?.id]. Banner orange cuando textarea difiere del borrador
+  activo (comparacion con .trim()). Boton "Restaurar borrador" que
+  re-ejecuta el prefill. Sin boton ni banner cuando no hay borrador activo.
+  Resuelve GRAVE-1 de la auditoria del Chunk 17.
 
-- Descripciones de template en modal de traspaso: el operador
-  no tiene guia para elegir el genero correcto. Una linea
-  descriptiva por template (para que tipo de pieza aplica,
-  extension esperada, audiencia) reduce el error de asignacion.
+- **19C** `dc0bedc` feat(chunk19c): validador tono IP en fase pesquisa —
+  tool validador_tono_ip, tab UI, score apto_para_traspaso. Nueva tool
+  validador_tono_ip en ToolName, IP_PROMPT_BUILDERS, MP_PROMPT_BUILDERS
+  y VALID_TOOLS. Prompt con 4 dimensiones IP sin brand-alignment: rigor
+  periodistico, extension y estructura, calidad de fuentes citadas, modo
+  de operacion declarado. JSON con apto_para_traspaso (score >= 3.0).
+  Tab "Validador IP" en PHASE_CONFIG.pesquisa despues del Borrador IP.
+  Estados React con prefijo ip. Handler handleValidarBorradorIP sin
+  tenant/template (modo IP puro). Resultado efimero en React, sin
+  persistencia en data. UI identica en estructura al validador MP con
+  labels adaptados.
 
-- thesis subordinada visualmente a hipotesis_elegida: desde
-  que se elige una hipotesis, thesis es funcionalmente obsoleta
-  pero permanece visible con igual peso. Subordinarla con
-  jerarquia visual clara (tesis original → hipotesis elegida).
+- **19D** `1bfc9ec` feat(chunk19d): rename borrador.borrador a
+  borrador.contenido con retrocompat dual-read. Archivos tocados:
+  ProjectDetailClient.tsx, export/route.ts. BorradorData.borrador
+  renombrado a BorradorData.contenido; campo legacy borrador? opcional
+  preservado para retrocompat TypeScript. parseBorradorFromRaw con
+  lectura dual raw.contenido ?? raw.borrador — proyectos existentes
+  con clave vieja siguen funcionando sin migracion. buildBorradorTextoPlano
+  usa data.contenido. ~25 accesos TypeScript actualizados. export/route.ts
+  borradorToMarkdown con lectura dual. Pitch guard y export context panel
+  corregidos (bug preexistente: leian titulo en nivel incorrecto). Grep
+  post-cambio confirma cero referencias al nesting viejo en lectura y
+  escritura.
 
-- data.borrador.borrador → renombrar a data.borrador.contenido:
-  el nesting actual (data.borrador.borrador.titulo) es un
-  accidente de implementacion. Deuda tecnica documentada desde
-  la auditoria del Chunk 17.
+Decision arquitectonica registrada: el rename usa lectura dual sin
+migracion de base de datos. Los proyectos existentes en Railway con
+data.borrador.borrador se leen correctamente via raw.contenido ?? raw.borrador.
+Los proyectos nuevos persisten con data.borrador.contenido. La clave
+vieja queda como campo opcional en la interfaz TypeScript hasta que
+todos los proyectos existentes sean regenerados naturalmente. No hay
+ALTER TABLE ni script de update masivo.
 
-- Badge en UI cuando pitch.generadoEn < borrador.generadoEn:
-  indicador visible cuando el pitch es anterior al borrador
-  actual. El gate C5 bloquea el export pero no hay indicador
-  proactivo durante el trabajo.
+### Chunk 20+ — Futuros (sin orden definitivo)
+
+- Persistencia de validaciones IP en data.validaciones_ip[]:
+  el resultado del Validador IP hoy es efimero en React. Persistirlo
+  permite historial de iteraciones antes del traspaso, identico al
+  patron de validaciones_borrador[] del validador MP.
+
+- Migracion limpia de clave legacy borrador en BorradorData:
+  cuando todos los proyectos existentes hayan regenerado su borrador
+  (escribiendo contenido en vez de borrador), eliminar el campo
+  legacy borrador? de la interfaz y el fallback del parser.
 
 - Bitacora de Pesquisa Externa con trazabilidad de hallazgos
-  por motor: diferida a cuando la plataforma se abra a
-  operadores externos.
+  por motor: diferida a cuando la plataforma se abra a operadores
+  externos.
+
+- Score apto_para_traspaso como soft gate confirmable: hoy el
+  Validador IP informa pero no bloquea. Si score < 3.0, agregar
+  un soft gate confirmable en el avance pesquisa -> produccion
+  identico a los soft gates del Chunk 9.
+
+## Hallazgos de validacion — Chunk 19 (13 abril 2026)
+
+Chunk 19 cerro los seis futuros documentados al cierre del Chunk 18,
+en cuatro sub-chunks secuenciales sin rework. Un hallazgo arquitectonico
+emergio durante la ejecucion.
+
+### a) Bug preexistente en pitch guard y export context panel
+
+El Chunk 19D descubrio que el pitch guard (IIFE en el listado de
+hipotesis) y el panel de contexto del exportador leian borrRaw.titulo
+donde borrRaw es el envelope data.borrador. El titulo vive en
+data.borrador.borrador.titulo (clave vieja) o data.borrador.contenido.titulo
+(clave nueva), nunca en el nivel del envelope. El check era siempre
+undefined, lo que significa que el pitch guard evaluaba la condicion
+de borrador disponible incorrectamente. Corregido en 19D con lectura
+dual en el nivel correcto. Hallazgo: la clausula de detencion del
+prompt pidio grep exhaustivo, lo que permitio que Claude Code
+encontrara este bug preexistente que no era parte del scope declarado.
+
+### b) buildBorradorTextoPlano como refactor bonus del 19B
+
+El Chunk 19B extrajo la construccion de texto plano del borrador como
+funcion reutilizable buildBorradorTextoPlano(). Esta funcion fue
+consumida inmediatamente en tres lugares: el boton "Copiar al
+portapapeles" del tab Borrador, el prefill del Validador de Borrador
+(19B), y el prefill del Validador IP (19C). La extraccion elimino
+duplicacion y garantizo que los tres consumidores producen texto
+identico.
+
+### c) GRAVE-1 resuelto operativamente
+
+El hallazgo GRAVE-1 de la auditoria del Chunk 17 (validador evalua
+texto externo sin advertir) queda resuelto operativamente en el 19B:
+el textarea se prefilla desde el borrador activo, el banner orange
+advierte si el operador lo modifica, y el boton Restaurar permite
+volver al borrador guardado. No hay hard block — el operador puede
+validar texto externo si lo decide conscientemente. La plataforma
+asiste, no automatiza.
+
+### d) CRITICO-2 resuelto parcialmente en 19A
+
+La subordinacion visual de thesis a hipotesis_elegida (CRITICO-2 de
+la auditoria del Chunk 17) queda resuelta en el 19A. La thesis sigue
+visible pero con jerarquia visual subordinada (opacity-50, label
+"Tesis original"). La hipotesis elegida aparece prominente con badge
+"Activa". El campo thesis sigue en el schema sin cambios — la
+resolucion es puramente visual sin tocar datos.
 
 ## Hallazgos de validacion — Chunk 18 (13 abril 2026)
 
