@@ -40,9 +40,9 @@ const PIPELINE_PHASES = [
   'validacion',
   'pesquisa',
   'produccion',
-  'visual',
   'revision',
   'aprobado',
+  'visual',
   'exportado',
 ];
 
@@ -75,6 +75,8 @@ export default function ProjectsClient({ tenants }: { tenants: Tenant[] }) {
   const [error, setError] = useState<string | null>(null);
   const [filterTenant, setFilterTenant] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
+  const [filterTitle, setFilterTitle] = useState('');
+  const [titleInput, setTitleInput] = useState('');
 
   useEffect(() => {
     loadProjects();
@@ -98,6 +100,7 @@ export default function ProjectsClient({ tenants }: { tenants: Tenant[] }) {
   const filtered = projects.filter((p) => {
     if (filterTenant && p.tenantSlug !== filterTenant) return false;
     if (filterStatus && p.status !== filterStatus) return false;
+    if (filterTitle && !p.title.toLowerCase().includes(filterTitle.toLowerCase())) return false;
     return true;
   });
 
@@ -121,7 +124,7 @@ export default function ProjectsClient({ tenants }: { tenants: Tenant[] }) {
   return (
     <div className="space-y-6">
       {/* Filtros */}
-      <div className="flex gap-3">
+      <div className="flex gap-3 flex-wrap items-center">
         <select
           value={filterTenant}
           onChange={(e) => setFilterTenant(e.target.value)}
@@ -142,6 +145,31 @@ export default function ProjectsClient({ tenants }: { tenants: Tenant[] }) {
             <option key={phase} value={phase}>{STATUS_LABELS[phase]}</option>
           ))}
         </select>
+        <div className="flex gap-1.5">
+          <input
+            type="text"
+            value={titleInput}
+            onChange={(e) => setTitleInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') setFilterTitle(titleInput); }}
+            placeholder="Buscar por titulo..."
+            className="bg-space-cadet border border-davy-gray/50 rounded px-3 py-2 text-seasalt text-sm focus:outline-none focus:border-amber-brand w-52"
+          />
+          <button
+            onClick={() => setFilterTitle(titleInput)}
+            className="bg-space-cadet border border-davy-gray/50 rounded px-3 py-2 text-seasalt text-sm hover:border-amber-brand transition-colors"
+          >
+            Buscar
+          </button>
+          {filterTitle && (
+            <button
+              onClick={() => { setTitleInput(''); setFilterTitle(''); }}
+              className="bg-space-cadet border border-davy-gray/50 rounded px-2 py-2 text-davy-gray text-sm hover:text-seasalt hover:border-amber-brand transition-colors"
+              title="Limpiar busqueda"
+            >
+              ✕
+            </button>
+          )}
+        </div>
         <span className="text-davy-gray text-sm self-center ml-auto">
           {filtered.length} project{filtered.length !== 1 ? 's' : ''}
         </span>
