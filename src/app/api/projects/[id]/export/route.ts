@@ -64,6 +64,36 @@ async function findProjectForExport(id: string) {
   return rows[0] ?? null;
 }
 
+// ── Helper: nombre de archivo con genero y titulo ──
+function buildNombreArchivo(
+  templateName: string | null,
+  titulo: string | null,
+  sufijo: string,
+  extension: string
+): string {
+  const genero = (templateName ?? 'Documento')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9\s]/g, '')
+    .trim();
+
+  if (!titulo) {
+    return `${genero} — ${sufijo}.${extension}`;
+  }
+
+  const tituloLimpio = titulo
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9\s]/g, '')
+    .trim();
+
+  const tituloCorto = tituloLimpio.length > 50
+    ? tituloLimpio.substring(0, 50).replace(/\s+\S*$/, '').trim()
+    : tituloLimpio;
+
+  return `${genero} — ${tituloCorto}.${extension}`;
+}
+
 // ── Helper: footer paragraph ──
 function footerParagraph(): Paragraph {
   return new Paragraph({
@@ -528,16 +558,26 @@ export async function POST(
     const zip = new JSZip();
     const folder = zip.folder(prefix)!;
 
+    // Extraer titulo del borrador para nombres de archivo (lectura dual)
+    const borradorRaw = data.borrador as Record<string, unknown> | undefined;
+    const borrContenido = borradorRaw
+      ? (borradorRaw.contenido ?? borradorRaw.borrador) as Record<string, unknown> | undefined
+      : undefined;
+    const tituloDoc = borrContenido && typeof borrContenido.titulo === 'string'
+      ? borrContenido.titulo
+      : null;
+    const templateName = project.templateName ?? null;
+
     // 1. borrador.docx — si existe
-    if (data.borrador && typeof data.borrador === 'object') {
+    if (borradorRaw && typeof borradorRaw === 'object') {
       const doc = buildBorradorDocx(
-        data.borrador as Record<string, unknown>,
+        borradorRaw,
         prefix,
         project.tenantName,
         project.templateName,
       );
       const buf = await Packer.toBuffer(doc);
-      folder.file('borrador.docx', buf);
+      folder.file(buildNombreArchivo(templateName, tituloDoc, 'Borrador', 'docx'), buf);
     }
 
     // 2. pitch.docx — si existe
@@ -549,14 +589,14 @@ export async function POST(
         project.templateName,
       );
       const buf = await Packer.toBuffer(doc);
-      folder.file('pitch.docx', buf);
+      folder.file(buildNombreArchivo(templateName, null, 'Pitch editorial', 'docx'), buf);
     }
 
     // 3. fuentes.docx — si existen
     if (Array.isArray(data.fuentes) && data.fuentes.length > 0) {
       const doc = buildFuentesDocx(data.fuentes, prefix);
       const buf = await Packer.toBuffer(doc);
-      folder.file('fuentes.docx', buf);
+      folder.file(buildNombreArchivo(templateName, null, 'Fuentes del expediente', 'docx'), buf);
     }
 
     // 4. hipotesis.docx — si existen
@@ -567,7 +607,7 @@ export async function POST(
       }
       const doc = buildHipotesisDocx(hipotesisInput, prefix);
       const buf = await Packer.toBuffer(doc);
-      folder.file('hipotesis.docx', buf);
+      folder.file(buildNombreArchivo(templateName, null, 'Hipotesis de investigacion', 'docx'), buf);
     }
 
     // 5. proyecto.json — data completa
