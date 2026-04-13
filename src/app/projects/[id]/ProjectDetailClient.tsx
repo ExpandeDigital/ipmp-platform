@@ -629,6 +629,21 @@ function parseBorradorFromRaw(raw: Record<string, unknown>): BorradorData | null
   return { borrador, metadata, notas_editoriales: notas, generadoEn, notasOperador, modo };
 }
 
+// Chunk 19B: construye texto plano del borrador para el Validador de Tono
+// y para el botón "Copiar al portapapeles". Reutilizable.
+function buildBorradorTextoPlano(data: BorradorData): string {
+  const partes: string[] = [];
+  if (data.borrador.titulo) partes.push(data.borrador.titulo);
+  if (data.borrador.bajada) partes.push(data.borrador.bajada);
+  if (data.borrador.lead) partes.push(data.borrador.lead);
+  data.borrador.cuerpo.forEach((sec) => {
+    if (sec.subtitulo) partes.push(sec.subtitulo);
+    sec.parrafos.forEach((p) => partes.push(p));
+  });
+  if (data.borrador.cierre) partes.push(data.borrador.cierre);
+  return partes.join('\n\n');
+}
+
 // Chunk 12B: builder del texto del exportador de pesquisa externa.
 // Genera el prompt pre-formateado que el operador va a copiar y
 // pegar en una conversacion nueva de Claude.ai (el motor de
@@ -939,6 +954,31 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
       typeof borradorRaw?.notasOperador === 'string' ? borradorRaw.notasOperador : '';
     if (notasPersistidas && !borradorOperadorNotas.trim()) {
       setBorradorOperadorNotas(notasPersistidas);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project?.id]);
+
+  // Chunk 19B: prefill del textarea del Validador de Tono del Borrador
+  // desde el borrador activo (MP prioritario, luego IP). Solo al montar
+  // o cambiar project, si el textarea local esta vacio.
+  useEffect(() => {
+    if (!project) return;
+    if (borradorTexto.trim()) return; // no sobreescribir edicion manual
+    const dataObj = (project.data ?? {}) as Record<string, unknown>;
+    const borradorMPRaw = dataObj.borrador as Record<string, unknown> | undefined;
+    if (borradorMPRaw) {
+      const parsed = parseBorradorFromRaw(borradorMPRaw);
+      if (parsed) {
+        setBorradorTexto(buildBorradorTextoPlano(parsed));
+        return;
+      }
+    }
+    const borradorIPRaw = dataObj.borrador_ip as Record<string, unknown> | undefined;
+    if (borradorIPRaw) {
+      const parsed = parseBorradorFromRaw(borradorIPRaw);
+      if (parsed) {
+        setBorradorTexto(buildBorradorTextoPlano(parsed));
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project?.id]);
@@ -4406,27 +4446,69 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                     borrador antes de exportar. Cada análisis queda guardado en el historial de
                     iteraciones.
                   </p>
-                  <div className="space-y-3">
-                    <textarea
-                      value={borradorTexto}
-                      onChange={(e) => setBorradorTexto(e.target.value)}
-                      placeholder="Pegá acá el texto del borrador a validar…"
-                      rows={8}
-                      maxLength={10000}
-                      className="w-full bg-oxford-blue border border-davy-gray/30 rounded px-4 py-2
-                                 text-seasalt placeholder:text-davy-gray/50 focus:outline-none
-                                 focus:border-amber-brand/50 text-sm resize-y"
-                    />
-                    <button
-                      onClick={handleValidarBorrador}
-                      disabled={!borradorTexto.trim() || validandoBorrador}
-                      className="w-full py-2.5 bg-amber-brand text-oxford-blue rounded font-medium text-sm
-                                 hover:bg-amber-brand/90 transition-colors
-                                 disabled:opacity-40 disabled:cursor-not-allowed"
-                    >
-                      {validandoBorrador ? 'Analizando borrador…' : '✅ Validar Borrador'}
-                    </button>
-                  </div>
+                  {(() => {
+                    // Chunk 19B: texto esperado del borrador activo (MP prioritario, luego IP)
+                    const dataObj19 = (project?.data ?? {}) as Record<string, unknown>;
+                    const borradorMPRaw19 = dataObj19.borrador as Record<string, unknown> | undefined;
+                    const borradorIPRaw19 = dataObj19.borrador_ip as Record<string, unknown> | undefined;
+                    let textoEsperado: string | null = null;
+                    if (borradorMPRaw19) {
+                      const p = parseBorradorFromRaw(borradorMPRaw19);
+                      if (p) textoEsperado = buildBorradorTextoPlano(p);
+                    }
+                    if (!textoEsperado && borradorIPRaw19) {
+                      const p = parseBorradorFromRaw(borradorIPRaw19);
+                      if (p) textoEsperado = buildBorradorTextoPlano(p);
+                    }
+                    const textoDifiere = textoEsperado !== null && borradorTexto.trim() !== textoEsperado.trim();
+
+                    return (
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs text-davy-gray">Texto a validar</label>
+                          {textoEsperado && (
+                            <button
+                              type="button"
+                              onClick={() => setBorradorTexto(textoEsperado!)}
+                              className="text-xs border border-davy-gray/30 text-davy-gray rounded px-2 py-0.5 hover:text-seasalt hover:border-davy-gray/60"
+                            >
+                              Restaurar borrador
+                            </button>
+                          )}
+                        </div>
+                        <textarea
+                          value={borradorTexto}
+                          onChange={(e) => setBorradorTexto(e.target.value)}
+                          placeholder="Pegá acá el texto del borrador a validar…"
+                          rows={8}
+                          maxLength={10000}
+                          className="w-full bg-oxford-blue border border-davy-gray/30 rounded px-4 py-2
+                                     text-seasalt placeholder:text-davy-gray/50 focus:outline-none
+                                     focus:border-amber-brand/50 text-sm resize-y"
+                        />
+                        {textoDifiere && (
+                          <div className="flex items-start gap-2 rounded-md border border-orange-200 bg-orange-50 p-3 text-sm text-orange-800 mb-3">
+                            <span>⚠️</span>
+                            <span>
+                              El texto a evaluar no coincide con el borrador activo del
+                              proyecto. El validador va a evaluar lo que ves en el campo,
+                              no el borrador guardado. Si querés evaluar el borrador actual,
+                              usá el botón &quot;Restaurar borrador&quot;.
+                            </span>
+                          </div>
+                        )}
+                        <button
+                          onClick={handleValidarBorrador}
+                          disabled={!borradorTexto.trim() || validandoBorrador}
+                          className="w-full py-2.5 bg-amber-brand text-oxford-blue rounded font-medium text-sm
+                                     hover:bg-amber-brand/90 transition-colors
+                                     disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          {validandoBorrador ? 'Analizando borrador…' : '✅ Validar Borrador'}
+                        </button>
+                      </div>
+                    );
+                  })()}
                   {borradorError && <p className="text-red-400 text-sm mt-3">{borradorError}</p>}
                 </div>
               )}
@@ -4692,18 +4774,7 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                     : 0;
 
                   // Texto plano para copiar al portapapeles (modo a: solo cuerpo, sin metadata)
-                  const textoPlano = (() => {
-                    const partes: string[] = [];
-                    if (borrador.titulo) partes.push(borrador.titulo);
-                    if (borrador.bajada) partes.push(borrador.bajada);
-                    if (borrador.lead) partes.push(borrador.lead);
-                    borrador.cuerpo.forEach((sec) => {
-                      if (sec.subtitulo) partes.push(sec.subtitulo);
-                      sec.parrafos.forEach((p) => partes.push(p));
-                    });
-                    if (borrador.cierre) partes.push(borrador.cierre);
-                    return partes.join('\n\n');
-                  })();
+                  const textoPlano = buildBorradorTextoPlano(parsed);
 
                   const handleCopiar = async () => {
                     // Path moderno: navigator.clipboard.writeText (requiere contexto seguro HTTPS)
