@@ -679,7 +679,176 @@ archivo_url_v1 para trazabilidad forense. Solo el archivo activo
 (archivo_url) es visible al operador. El V1 es recuperable desde
 el dashboard de Vercel Blob si se necesita.
 
-### Chunk 17+ — Futuros (sin orden definitivo)
+### Chunk 17 — Asset Library per tenant [COMPLETADO 12 abril 2026]
 
-- Asset library per tenant con versionado y metadata obligatoria (declaracion IA, alt text, origen).
-- Bitacora de Pesquisa Externa con trazabilidad de hallazgos por motor: workflow externo documentado en 14C. Feature de plataforma diferida: registrar cada exportacion con que motor se uso, que hallazgos se promovieron al ODF y cuales se descartaron. Implementar cuando la plataforma se abra a operadores externos.
+- **17A** `c31badc` feat(chunk17a): tabla tenant_assets + API completo
+  Asset Library. Schema: 14 columnas con declaracion_ia (boolean
+  notNull), alt_text (text notNull), origen (text notNull) como
+  metadata obligatoria. Endpoints: GET por tenantSlug, POST upload
+  blob (access privado, patron identico a /api/fuentes/upload),
+  POST registro con validacion de metadata obligatoria en el API
+  (no solo en UI), PATCH metadata, PATCH deactivate con blob delete
+  best-effort. Tabla creada via /api/admin/init (IF NOT EXISTS).
+  Dos indices: idx_tenant_assets_tenant, idx_tenant_assets_activo.
+
+- **17B** `6991685` feat(chunk17b): UI Asset Library en /admin/assets.
+  Server component page.tsx con fetch de tenants para selector.
+  Client component AssetLibraryClient.tsx: selector de tenant,
+  formulario upload en dos pasos (POST /upload blob -> POST registro
+  con metadata), grilla responsive con thumbnail para imagenes e
+  icono para PDFs/otros, badge amarillo "Generado con IA", acciones
+  Ver archivo (nueva pestana) y Desactivar con confirm dialog,
+  estado vacio cuando no hay assets. Nav.tsx: link "Assets" agregado
+  al array links apuntando a /admin/assets.
+
+- **17G** `[HASH]` docs(chunk17g): cierre documental Chunk 17.
+
+Decision arquitectonica registrada: la tabla tenant_assets es una
+entidad separada de la tabla assets existente. La tabla assets
+(Chunks 1-6) modela slots visuales por proyecto con semantica
+editorial forense: FK a projects.id, campos tipo (hero_narrativa,
+still_marca), origin (ia_generated, real_photo), representsRealPerson,
+consentDocUrl. La tabla tenant_assets modela una biblioteca
+reutilizable de recursos por tenant, independiente del pipeline de
+proyectos: FK a tenants.id, campos de metadata periodistica
+obligatoria (declaracion_ia, alt_text, origen). Ambas coexisten sin
+colision. Patron documentado: cuando dos entidades comparten el
+dominio de archivos pero tienen ciclos de vida y consumidores
+distintos, se crean tablas separadas antes que modificar una tabla
+existente con FK activas.
+
+Los tres campos de metadata obligatoria (declaracion_ia, alt_text,
+origen) son obligatorios en el API, no solo en la UI. Rechaza con
+400 si falta cualquiera. Esta decision implementa directamente la
+regla de branding del CLAUDE.md: los assets generados con IA deben
+declararse como tales en metadata y creditos.
+
+El upload en dos pasos (POST /upload blob -> POST /tenant-assets
+registro) es un contrato explicito de la UI. Si el Paso A tiene
+exito pero el Paso B falla, el blob queda huerfano recuperable
+desde el dashboard de Vercel Blob. Mismo contrato best-effort del
+Chunk 15, no se introduce logica de rollback porque la complejidad
+no esta justificada para el volumen actual.
+
+### Chunk 18+ — Futuros (sin orden definitivo)
+
+- **18A — Gate de exportacion por completitud del genero** (PRIORIDAD 1):
+  Antes de avanzar a fase exportado, verificar contra parametros del
+  template: (1) extension_palabras >= minimo del template,
+  (2) fuentes_citadas.length >= 1, (3) borrador.desactualizado === false,
+  (4) validacion definitiva con score >= umbral del template,
+  (5) pitch.generadoEn > borrador.generadoEn. Hard block con lista
+  de condiciones faltantes — no soft gate. El exportador del Chunk 13B
+  empaqueta estado, no producto terminado. Este gate cierra esa brecha.
+
+- **18B — Documento de referencia maestro** (PRIORIDAD 2):
+  Mecanismo para designar una fuente del ODF con archivo adjunto como
+  el documento que alimenta el regenerador de borrador y el constructor
+  de pitch. El handler extrae texto del blob (docx/pdf -> texto plano)
+  e inyecta como contexto prioritario antes del borrador. Resuelve el
+  loop: operador genera borrador [VERIFICAR] -> subsana verificaciones
+  en herramienta externa -> sube documento corregido al ODF -> lo
+  designa como referencia maestro -> regenera borrador con ese contenido
+  como base -> pitch construido desde borrador real -> gate 18A pasa.
+
+- **Bitacora de Pesquisa Externa con trazabilidad de hallazgos por
+  motor**: workflow externo documentado en 14C. Feature diferida:
+  registrar cada exportacion con que motor se uso, que hallazgos
+  se promovieron al ODF y cuales se descartaron. Implementar cuando
+  la plataforma se abra a operadores externos.
+
+## Hallazgos de validacion — Chunk 17 (12 abril 2026)
+
+Chunk 17 (Asset Library per tenant) shipped en dos sub-chunks
+ejecutados en una sola sesion de trabajo, mas una auditoria de
+pipeline sobre un export real (METRICPRESS-AC-2026-0001) que
+genero hallazgos arquitectonicos de alta relevancia para el Chunk 18.
+
+- 17A: schema + API. Build limpio. Tabla creada via /api/admin/init.
+- 17B: UI. Validado visualmente en produccion: selector de tenant,
+  upload de imagen (thumbnail visible) y PDF (icono visible),
+  badge IA, accion ver archivo y desactivar con confirm dialog.
+
+### a) Separacion tabla assets vs tenant_assets
+
+El reconocimiento de 17A detecto que la tabla assets existente tiene
+estructura incompatible con la Asset Library per tenant: FK a
+projects.id y campos de semantica editorial forense. Se creo
+tenant_assets como tabla separada. Patron documentado: no modificar
+tablas existentes con FK activas cuando el nuevo concepto tiene ciclo
+de vida distinto.
+
+### b) Path de endpoints Blob
+
+El prompt inicial referencio /api/sources/ como path de los endpoints
+Blob. El reconocimiento corrigio el path real: /api/fuentes/
+(establecido en Chunk 15). La clausula de detencion funciono como
+fue disenada.
+
+### c) Auditoria de pipeline — solapamientos detectados en METRICPRESS-AC-2026-0001
+
+Durante la sesion del Chunk 17, se realizo una auditoria de un export
+real de la plataforma (METRICPRESS-AC-2026-0001, paper academico sobre
+origenes del candombe). La auditoria identifico seis solapamientos o
+confusiones en el modelo de datos del pipeline:
+
+CRITICO-1 — Pitch anterior al borrador: los timestamps del export
+mostraron pitch.generadoEn (12:07) anterior a borrador.generadoEn
+(14:32). El constructor de pitch se ejecuto desde la hipotesis elegida
+sin borrador existente, produciendo datos fabricados que no estaban
+en ninguna fuente del ODF. No hay indicador en la UI que advierta
+cuando el pitch es anterior al borrador. Fix programado en 18A
+(condicion 5 del gate de exportacion).
+
+CRITICO-2 — thesis vs hipotesis_elegida: el campo thesis del proyecto
+y el titulo de hipotesis_elegida coexisten visualmente como si fueran
+igualmente activos. Desde que se elige una hipotesis, thesis es
+funcionalmente obsoleta pero permanece visible. El borrador se
+construye desde hipotesis_elegida, no desde thesis.
+
+GRAVE-1 — Validador evalua texto externo como borrador: la validacion
+definitiva del export tenia score 5 (publicable) sobre un borrador de
+542 palabras en modo diagnostico. El validador recibio el contenido
+del paper V2 corregido externamente — no el borrador de la plataforma.
+El validador no distingue ni advierte cuando el texto que recibe
+difiere del borrador activo del proyecto.
+
+GRAVE-2 — data.borrador.borrador (nesting): la ruta real al titulo
+del borrador es data.borrador.borrador.titulo. El nesting del mismo
+nombre es un accidente de implementacion. Renombrar el objeto interno
+a data.borrador.contenido reduce el riesgo de bugs silenciosos en
+handlers que lean un nivel incorrecto.
+
+MODERADO-1 — fuentes_citadas vacia con fuentes en ODF: el banner de
+borrador desactualizado no especifica que el borrador no cita ninguna
+de las fuentes actuales del ODF. El operador puede asumir que el
+borrador incorporo las fuentes porque las ve en el ODF.
+
+MODERADO-2 — pitch.pitch vs pitch.texto_completo: el pitch tiene dos
+representaciones del mismo contenido. texto_completo es el canonico
+(exportado, visible al editor). Los campos estructurados de pitch.pitch
+son solo metadatos de generacion.
+
+### d) Gap arquitectonico central identificado en la auditoria
+
+El exportador del Chunk 13B es un exportador de estado, no de producto
+terminado. Empaqueta lo que hay en el proyecto al momento de llegar a
+fase exportado sin verificar si el contenido cumple los estandares
+minimos del genero elegido. El pipeline tiene un unico hard block
+(TRASPASO_REQUIRED en pesquisa -> produccion). Todo lo demas, incluido
+exportar con borrador de 542 palabras en modo diagnostico, es un soft
+gate confirmable o no tiene gate.
+
+El gap se cierra con el gate de exportacion del Chunk 18A: verificacion
+de cinco condiciones contra parametros del template antes de permitir
+el avance a exportado. Solo cuando esas cinco condiciones se cumplen
+el ZIP representa un insumo periodistico terminado.
+
+El genero elegido al crear el proyecto (paper academico, cronica,
+reportaje, etc.) ya entra correctamente al prompt del generador de
+borrador: aplica estructura, tono y rango de extension. Pero sin
+fuentes reales en el ODF, el genero solo puede dar forma al esqueleto.
+El producto terminado que el operador espera ver requiere primero
+poblar el ODF con evidencia verificada, luego regenerar el borrador
+desde esa evidencia, y finalmente que el gate 18A valide que el
+resultado cumple los estandares antes de permitir el export.
