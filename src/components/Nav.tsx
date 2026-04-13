@@ -16,6 +16,7 @@ export default function Nav({ current }: NavProps) {
     { href: '/', label: 'Dashboard', id: 'dashboard' },
     { href: '/projects', label: 'Projects', id: 'projects' },
     { href: '/admin/editores', label: 'Editores', id: 'editores' },
+    { href: '/admin/assets', label: 'Assets', id: 'assets' },
   ];
 
   return (
