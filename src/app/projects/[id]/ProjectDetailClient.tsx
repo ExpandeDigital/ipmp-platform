@@ -285,7 +285,7 @@ interface TemplateOption {
   reviewLevel: string;
 }
 
-type ActiveTool = 'hipotesis' | 'vhp' | 'odf' | 'pitch' | 'radar' | 'validador' | 'borrador' | 'exportador' | 'prompt_visual';
+type ActiveTool = 'hipotesis' | 'vhp' | 'odf' | 'pitch' | 'radar' | 'validador' | 'borrador' | 'borrador_ip' | 'exportador' | 'prompt_visual';
 
 interface PhaseConfig {
   tabs: { key: ActiveTool; label: string }[];
@@ -426,6 +426,7 @@ const PHASE_CONFIG: Record<string, PhaseConfig> = {
   pesquisa: {
     tabs: [
       { key: 'odf', label: '🗂️ Organizador de Fuentes' },
+      { key: 'borrador_ip', label: '📄 Documento de Investigacion' },
       { key: 'radar', label: '📡 Radar Editorial' },
     ],
   },
@@ -458,6 +459,20 @@ function genId(): string {
     return crypto.randomUUID();
   }
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+// Chunk 18B: derivar MIME type de un nombre de archivo
+function getMimeFromName(name: string): string {
+  const ext = name.split('.').pop()?.toLowerCase() ?? '';
+  const map: Record<string, string> = {
+    pdf: 'application/pdf',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    doc: 'application/msword',
+    txt: 'text/plain',
+    csv: 'text/csv',
+    md: 'text/plain',
+  };
+  return map[ext] ?? '';
 }
 
 function parseHipotesisFromRaw(a: Record<string, unknown>, idx: number): Hipotesis {
@@ -843,6 +858,11 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
   const [borradorOperadorNotas, setBorradorOperadorNotas] = useState('');
   const [generandoBorrador, setGenerandoBorrador] = useState(false);
   const [genBorradorError, setGenBorradorError] = useState<string | null>(null);
+
+  // Chunk 18B: Generador de Borrador InvestigaPress (fase pesquisa)
+  const [borradorIPNotas, setBorradorIPNotas] = useState('');
+  const [generandoBorradorIP, setGenerandoBorradorIP] = useState(false);
+  const [genBorradorIPError, setGenBorradorIPError] = useState<string | null>(null);
 
   // Chunk 12B: modal del exportador de pesquisa externa
   const [exportadorAbierto, setExportadorAbierto] = useState(false);
@@ -1423,6 +1443,177 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
       setGenBorradorError(err instanceof Error ? err.message : 'Error desconocido');
     } finally {
       setGenerandoBorrador(false);
+    }
+  }
+
+  // Chunk 18B: handler del Generador de Borrador InvestigaPress (fase pesquisa)
+  async function handleGenerateBorradorIP() {
+    if (!project) return;
+
+    // Hard-block: hipotesis elegida obligatoria
+    const hipotesisElegida = project.data?.hipotesis_elegida as
+      | Record<string, unknown>
+      | undefined;
+    if (!hipotesisElegida || typeof hipotesisElegida !== 'object') {
+      setGenBorradorIPError(
+        'No hay hipotesis elegida. Volve a la fase Validacion, genera hipotesis y elegi una antes de generar el documento de investigacion.'
+      );
+      return;
+    }
+
+    // Si ya existe borrador_ip, confirmar regeneracion
+    const existingBorradorIP = project.data?.borrador_ip as Record<string, unknown> | undefined;
+    if (existingBorradorIP) {
+      const confirmar = confirm(
+        'Ya existe un documento de investigacion generado. ¿Regenerar? El anterior se sobreescribe.'
+      );
+      if (!confirmar) return;
+    }
+
+    setGenerandoBorradorIP(true);
+    setGenBorradorIPError(null);
+
+    try {
+      const heRaw = hipotesisElegida as Record<string, unknown>;
+      const verifCriticas = Array.isArray(heRaw.verificaciones_criticas)
+        ? (heRaw.verificaciones_criticas as unknown[]).map(String)
+        : [];
+      const fuentes = (project.data?.fuentes as Array<Record<string, unknown>>) ?? [];
+
+      // Paso 1: extraer contenido de archivos adjuntos
+      const fuentesConContenido: Array<{ nombre: string; contenido: string }> = [];
+      for (const f of fuentes) {
+        if (f.archivo_url && typeof f.archivo_url === 'string') {
+          try {
+            const extractRes = await fetch('/api/fuentes/extract-content', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                blobUrl: f.archivo_url,
+                mimeType: f.archivo_nombre
+                  ? getMimeFromName(String(f.archivo_nombre))
+                  : '',
+              }),
+            });
+            const extractJson = await extractRes.json();
+            if (extractJson.content) {
+              fuentesConContenido.push({
+                nombre: String(f.nombre_titulo ?? 'Fuente sin nombre'),
+                contenido: extractJson.content,
+              });
+            }
+          } catch {
+            // Best-effort: si falla la extraccion, seguimos sin ese contenido
+          }
+        }
+      }
+
+      // Paso 2: construir userMessage
+      let userMessage = '';
+
+      if (project.thesis) {
+        userMessage += `TESIS ORIGINAL DEL PROJECT:\n${project.thesis}\n\n`;
+      }
+
+      userMessage += `HIPOTESIS ELEGIDA:\n`;
+      userMessage += `- Titulo: ${heRaw.titulo ?? '[sin titulo]'}\n`;
+      userMessage += `- Gancho: ${heRaw.gancho ?? '[sin gancho]'}\n`;
+      userMessage += `- Tipo: ${heRaw.tipo ?? '[sin tipo]'}\n`;
+      userMessage += `- Audiencia: ${heRaw.audiencia ?? '[sin audiencia]'}\n`;
+      userMessage += `- Tono: ${heRaw.tono ?? '[sin tono]'}\n`;
+      userMessage += `- Pregunta clave: ${heRaw.pregunta_clave ?? '[sin pregunta clave]'}\n`;
+      if (verifCriticas.length > 0) {
+        userMessage += `- Verificaciones criticas:\n`;
+        verifCriticas.forEach((v) => {
+          userMessage += `  * ${v}\n`;
+        });
+      }
+      if (heRaw.evidencia_requerida) {
+        userMessage += `- Evidencia requerida: ${heRaw.evidencia_requerida}\n`;
+      }
+      userMessage += `\n`;
+
+      // Fuentes del ODF
+      if (fuentes.length > 0) {
+        userMessage += `FUENTES DOCUMENTADAS (ODF):\n`;
+        fuentes.forEach((f, idx) => {
+          userMessage += `${idx + 1}. Tipo: ${f.tipo ?? '[sin tipo]'}\n`;
+          userMessage += `   Nombre/titulo: ${f.nombre_titulo ?? '[sin nombre]'}\n`;
+          userMessage += `   Rol/origen: ${f.rol_origen ?? '[sin rol]'}\n`;
+          userMessage += `   Estado: ${f.estado ?? 'por_contactar'}\n`;
+          userMessage += `   Confianza: ${f.confianza ?? 'media'}\n`;
+          if (f.notas) userMessage += `   Notas: ${f.notas}\n`;
+          if (f.url) userMessage += `   URL: ${f.url}\n`;
+          userMessage += `\n`;
+        });
+      } else {
+        userMessage += `FUENTES DOCUMENTADAS (ODF): ninguna registrada en el expediente.\n\n`;
+      }
+
+      // Contenido extraido de archivos adjuntos
+      if (fuentesConContenido.length > 0) {
+        userMessage += `CONTENIDO VERIFICADO DE ARCHIVOS ADJUNTOS:\n\n`;
+        fuentesConContenido.forEach((fc) => {
+          userMessage += `──── CONTENIDO VERIFICADO DE FUENTE: ${fc.nombre} ────\n`;
+          userMessage += `${fc.contenido}\n`;
+          userMessage += `──── FIN CONTENIDO: ${fc.nombre} ────\n\n`;
+        });
+      } else {
+        userMessage += `CONTENIDO VERIFICADO DE ARCHIVOS ADJUNTOS: ningun archivo con contenido extraible.\n\n`;
+      }
+
+      // Notas del operador
+      if (borradorIPNotas.trim()) {
+        userMessage += `NOTAS ADICIONALES DEL OPERADOR: ${borradorIPNotas.trim()}\n`;
+      } else {
+        userMessage += `NOTAS ADICIONALES DEL OPERADOR: ninguna.\n`;
+      }
+
+      // Paso 3: llamar al endpoint
+      const genRes = await fetch('/api/ai/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tool: 'generador_borrador_ip',
+          projectId: project.id,
+          userMessage,
+        }),
+      });
+      const genJson = await genRes.json();
+      if (!genRes.ok) {
+        throw new Error(genJson.error || 'Error generando documento de investigacion');
+      }
+
+      // Parsear con el mismo parser del borrador MP
+      const parsed = parseBorradorFromRaw(genJson.result ?? {});
+      if (!parsed) {
+        throw new Error(
+          'El modelo devolvio una respuesta sin estructura valida. Intenta regenerar.'
+        );
+      }
+
+      const borradorIPPayload: BorradorData = {
+        ...parsed,
+        notasOperador: borradorIPNotas.trim() || undefined,
+        modo: fuentesConContenido.length > 0 ? 'evidencia' : 'diagnostico',
+      };
+
+      // Persistir en data.borrador_ip (separado de data.borrador)
+      const patchRes = await fetch(`/api/projects/${project.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: { borrador_ip: borradorIPPayload } }),
+      });
+      if (!patchRes.ok) {
+        const pj = await patchRes.json();
+        throw new Error(pj.error || 'Error guardando documento de investigacion');
+      }
+
+      await fetchProject();
+    } catch (err) {
+      setGenBorradorIPError(err instanceof Error ? err.message : 'Error desconocido');
+    } finally {
+      setGenerandoBorradorIP(false);
     }
   }
 
@@ -3770,6 +3961,254 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                   </button>
                 </div>
                 {pitchError && <p className="text-red-400 text-sm mt-3">{pitchError}</p>}
+              </div>
+            )}
+
+            {/* ── TAB: Documento de Investigacion IP (fase pesquisa) — Chunk 18B ── */}
+            {activeTool === 'borrador_ip' && phaseConfig.tabs.some((t) => t.key === 'borrador_ip') && (
+              <div className="space-y-6">
+                {/* Panel de contexto del expediente */}
+                {(() => {
+                  const dataObj = (project.data ?? {}) as Record<string, unknown>;
+                  const hipElegida = dataObj.hipotesis_elegida as Record<string, unknown> | undefined;
+                  const fuentes = (dataObj.fuentes as Array<Record<string, unknown>>) ?? [];
+                  const fuentesConArchivo = fuentes.filter((f) => !!f.archivo_url);
+                  const borradorIPRaw = dataObj.borrador_ip as Record<string, unknown> | undefined;
+                  const borradorIPParsed = borradorIPRaw ? parseBorradorFromRaw(borradorIPRaw) : null;
+
+                  return (
+                    <>
+                      {/* Contexto */}
+                      <div className="bg-oxford-blue/50 rounded-lg border border-davy-gray/20 p-4 space-y-2">
+                        <h4 className="text-amber-brand text-xs font-mono uppercase tracking-wider">
+                          Contexto del expediente
+                        </h4>
+                        <div className="grid grid-cols-3 gap-3 text-sm">
+                          <div>
+                            <span className="text-davy-gray">Hipotesis elegida:</span>{' '}
+                            <span className={hipElegida ? 'text-green-400' : 'text-red-400'}>
+                              {hipElegida ? (hipElegida.titulo as string) : 'No elegida'}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-davy-gray">Fuentes ODF:</span>{' '}
+                            <span className="text-seasalt">{fuentes.length}</span>
+                          </div>
+                          <div>
+                            <span className="text-davy-gray">Archivos adjuntos:</span>{' '}
+                            <span className={fuentesConArchivo.length > 0 ? 'text-green-400' : 'text-davy-gray'}>
+                              {fuentesConArchivo.length}
+                            </span>
+                          </div>
+                        </div>
+                        {fuentesConArchivo.length > 0 && (
+                          <p className="text-green-400/70 text-xs">
+                            El generador extraera el contenido de los archivos adjuntos automaticamente.
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Hard block: sin hipotesis */}
+                      {!hipElegida && (
+                        <div className="bg-red-500/10 border border-red-500/40 rounded p-4">
+                          <p className="text-red-400 text-sm font-semibold mb-1">
+                            Falta elegir una hipotesis
+                          </p>
+                          <p className="text-davy-gray text-sm">
+                            El Generador de Documento de Investigacion necesita una hipotesis elegida como ancla.
+                            Volve al tab Generador de Hipotesis en la fase Validacion.
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Formulario de generacion */}
+                      {hipElegida && (
+                        <div className="space-y-4">
+                          <div>
+                            <label className="block text-xs font-mono text-davy-gray uppercase tracking-wider mb-2">
+                              Notas adicionales para el generador (opcional)
+                            </label>
+                            <textarea
+                              value={borradorIPNotas}
+                              onChange={(e) => setBorradorIPNotas(e.target.value)}
+                              placeholder="Contexto adicional, enfoque preferido, restricciones..."
+                              rows={3}
+                              className="w-full bg-oxford-blue border border-davy-gray/30 rounded px-4 py-2
+                                         text-seasalt placeholder:text-davy-gray/50 focus:outline-none
+                                         focus:border-amber-brand/50 text-sm resize-none"
+                            />
+                          </div>
+                          <button
+                            onClick={handleGenerateBorradorIP}
+                            disabled={generandoBorradorIP}
+                            className={`w-full py-3 rounded font-bold text-sm transition-all ${
+                              generandoBorradorIP
+                                ? 'bg-davy-gray/30 text-davy-gray cursor-not-allowed'
+                                : 'bg-amber-brand text-oxford-blue hover:bg-amber-brand/90 active:scale-[0.99]'
+                            }`}
+                          >
+                            {generandoBorradorIP
+                              ? 'Extrayendo archivos y generando documento...'
+                              : borradorIPParsed
+                              ? 'Regenerar documento de investigacion'
+                              : 'Generar documento de investigacion'}
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Error */}
+                      {genBorradorIPError && (
+                        <div className="bg-red-500/10 border border-red-500/40 rounded p-3">
+                          <p className="text-red-400 text-sm">{genBorradorIPError}</p>
+                        </div>
+                      )}
+
+                      {/* Resultado: documento generado */}
+                      {borradorIPParsed && (
+                        <div className="space-y-4">
+                          {/* Badge de modo */}
+                          <div className="flex items-center gap-3">
+                            <span
+                              className={`text-xs px-2 py-0.5 rounded border ${
+                                borradorIPRaw?.modo === 'evidencia' || (borradorIPParsed.modo === 'evidencia')
+                                  ? 'bg-green-500/15 border-green-500/40 text-green-400'
+                                  : 'bg-amber-brand/15 border-amber-brand/40 text-amber-brand'
+                              }`}
+                            >
+                              {borradorIPRaw?.modo === 'evidencia' || (borradorIPParsed.modo === 'evidencia')
+                                ? 'Modo evidencia'
+                                : 'Modo diagnostico'}
+                            </span>
+                            <span className="text-davy-gray/60 text-xs">
+                              {borradorIPParsed.metadata.extension_palabras} palabras
+                            </span>
+                            {typeof borradorIPRaw?.generadoEn === 'string' && (
+                              <span className="text-davy-gray/60 text-xs">
+                                Generado: {new Date(borradorIPRaw.generadoEn as string).toLocaleString('es-CL')}
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Titulo + bajada */}
+                          <div className="bg-oxford-blue/50 rounded-lg border border-davy-gray/20 p-5">
+                            <h3 className="text-seasalt text-xl font-bold mb-2">
+                              {borradorIPParsed.borrador.titulo}
+                            </h3>
+                            {borradorIPParsed.borrador.bajada && (
+                              <p className="text-davy-gray text-sm italic">
+                                {borradorIPParsed.borrador.bajada}
+                              </p>
+                            )}
+                          </div>
+
+                          {/* Lead */}
+                          {borradorIPParsed.borrador.lead && (
+                            <div className="bg-amber-brand/5 border-l-2 border-amber-brand/40 px-4 py-3">
+                              <p className="text-seasalt text-sm leading-relaxed">
+                                {borradorIPParsed.borrador.lead}
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Cuerpo */}
+                          {borradorIPParsed.borrador.cuerpo.map((sec, idx) => (
+                            <div key={idx} className="space-y-2">
+                              {sec.subtitulo && (
+                                <h4 className="text-amber-brand/80 font-semibold text-sm">
+                                  {sec.subtitulo}
+                                </h4>
+                              )}
+                              {sec.parrafos.map((p, pidx) => (
+                                <p key={pidx} className="text-seasalt/90 text-sm leading-relaxed">
+                                  {p}
+                                </p>
+                              ))}
+                            </div>
+                          ))}
+
+                          {/* Cierre */}
+                          {borradorIPParsed.borrador.cierre && (
+                            <div className="border-t border-davy-gray/20 pt-4">
+                              <p className="text-seasalt/80 text-sm leading-relaxed italic">
+                                {borradorIPParsed.borrador.cierre}
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Metadata */}
+                          <div className="bg-oxford-blue/50 rounded-lg border border-davy-gray/20 p-4 space-y-3">
+                            <h4 className="text-amber-brand text-xs font-mono uppercase tracking-wider">
+                              Metadata del documento
+                            </h4>
+
+                            {borradorIPParsed.metadata.fuentes_citadas.length > 0 && (
+                              <div>
+                                <span className="text-davy-gray text-xs">Fuentes citadas:</span>
+                                <ul className="mt-1 space-y-0.5">
+                                  {borradorIPParsed.metadata.fuentes_citadas.map((f, i) => (
+                                    <li key={i} className="text-seasalt text-xs">• {f}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+
+                            {borradorIPParsed.metadata.advertencias_verificacion.length > 0 && (
+                              <div>
+                                <span className="text-amber-brand text-xs">Advertencias de verificacion:</span>
+                                <ul className="mt-1 space-y-0.5">
+                                  {borradorIPParsed.metadata.advertencias_verificacion.map((a, i) => (
+                                    <li key={i} className="text-amber-brand/70 text-xs">• {a}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+
+                            {borradorIPParsed.metadata.verificaciones_criticas_resueltas.length > 0 && (
+                              <div>
+                                <span className="text-green-400 text-xs">Verificaciones resueltas:</span>
+                                <ul className="mt-1 space-y-0.5">
+                                  {borradorIPParsed.metadata.verificaciones_criticas_resueltas.map((v, i) => (
+                                    <li key={i} className="text-green-400/70 text-xs">• {v}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+
+                            {borradorIPParsed.metadata.verificaciones_criticas_pendientes.length > 0 && (
+                              <div>
+                                <span className="text-red-400 text-xs">Verificaciones pendientes:</span>
+                                <ul className="mt-1 space-y-0.5">
+                                  {borradorIPParsed.metadata.verificaciones_criticas_pendientes.map((v, i) => (
+                                    <li key={i} className="text-red-400/70 text-xs">• {v}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Notas editoriales */}
+                          {borradorIPParsed.notas_editoriales && (
+                            <div className="bg-oxford-blue/30 rounded border border-davy-gray/10 p-3">
+                              <span className="text-davy-gray text-xs font-mono uppercase">Notas editoriales:</span>
+                              <p className="text-davy-gray text-xs mt-1">
+                                {borradorIPParsed.notas_editoriales}
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Nota informativa */}
+                          <div className="bg-amber-brand/5 border border-amber-brand/20 rounded p-3">
+                            <p className="text-amber-brand/80 text-xs">
+                              Este documento es el insumo para el traspaso a MetricPress.
+                              Cuando asignes marca y genero, el Generador de Borrador de la fase Produccion
+                              tomara esta investigacion como base de evidencia.
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
             )}
 
