@@ -1647,3 +1647,50 @@ Un dot de 8px no interrumpe el escaneo visual del listing pero
 permite detectar proyectos problematicos (rojo) o pendientes de
 accion (amber) sin abrir cada proyecto individualmente. El tooltip
 da contexto suficiente para saber que accion tomar.
+
+### Chunk 28 — Asignacion de editor a proyecto [COMPLETADO 15 abril 2026]
+
+- **28A** `ac6b0cc` feat(chunk28): asignacion de editor a proyecto —
+  schema, API, UI selector, card display.
+  schema.ts: campo editorId uuid nullable con FK a editoresAgenda.
+  init-sql.ts: ALTER TABLE projects ADD COLUMN IF NOT EXISTS
+  editor_id UUID REFERENCES editores_agenda(id) + INDEX idempotente.
+  GET /api/projects/[id]: LEFT JOIN a editoresAgenda, campos
+  editorId/editorNombre/editorApellido/editorMedio en response.
+  PATCH /api/projects/[id]: acepta editorId (UUID o null), valida
+  existencia en editoresAgenda antes de asignar.
+  GET /api/projects (listing): LEFT JOIN a editoresAgenda, campos
+  editorId/editorNombre/editorApellido en response.
+  ProjectDetailClient.tsx: estado editoresList cargado desde
+  GET /api/editores al montar, filtrado por activo (excepto editor
+  ya asignado). Select inline con feedback Guardando/Guardado/error.
+  ProjectsClient.tsx: campo editorNombre visible en columna derecha
+  de card con text-amber-brand/70, solo si hay editor asignado.
+
+Decision arquitectonica registrada: el editor asignado al proyecto
+es distinto del concepto historico de data.pitch.editorId (Chunk 11B,
+eliminado en Chunk 24C). El nuevo campo es responsabilidad editorial
+del proyecto, no destino comercial del pitch. La FK a editoresAgenda
+garantiza integridad referencial. El selector filtra editores
+inactivos excepto el ya asignado, para evitar desasignaciones
+accidentales al abrir proyectos con editores desactivados.
+
+## Hallazgos de validacion — Chunk 28 (15 abril 2026)
+
+### a) El ALTER TABLE idempotente como patron de migracion del repo
+
+El repo no usa Drizzle migrations en produccion — usa init-sql.ts
+con CREATE TABLE IF NOT EXISTS. Para agregar columnas a tablas
+existentes, el patron establecido en este chunk es ALTER TABLE
+... ADD COLUMN IF NOT EXISTS, agregado al final de init-sql.ts
+y aplicado via POST /api/admin/init. Es idempotente y reproducible.
+Este patron debe usarse en todos los chunks futuros que requieran
+cambios de schema en tablas existentes.
+
+### b) La asignacion de editor habilita el modelo de colaboracion
+
+Con editor_id en projects, la plataforma puede en el futuro filtrar
+el listing por editor asignado, enviar notificaciones al editor,
+y generar reportes de carga de trabajo por editor. El Chunk 28
+establece la infraestructura; las features de colaboracion avanzada
+se construyen encima sin cambios de schema.
