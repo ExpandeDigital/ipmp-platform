@@ -148,6 +148,17 @@ export default function ProjectsClient({ tenants }: { tenants: Tenant[] }) {
 
   const hasActiveFilters = Boolean(filterTenant || filterStatus || filterTitle || filterPhase);
 
+  const countIP = filtered.filter((p) => INVESTIGAPRESS_STATUSES.includes(p.status)).length;
+  const countMP = filtered.filter((p) => METRICPRESS_STATUSES.includes(p.status)).length;
+  const countListos = filtered.filter((p) => p.status === 'aprobado' || p.status === 'visual').length;
+
+  function healthDot(status: string): { color: string; title: string } {
+    if (status === 'draft') return { color: 'bg-red-500', title: 'Requiere borrador para avanzar' };
+    if (status === 'pesquisa' || status === 'visual') return { color: 'bg-amber-400', title: 'Pendiente de accion del operador' };
+    if (status === 'aprobado' || status === 'exportado') return { color: 'bg-green-500', title: 'En buen estado' };
+    return { color: 'bg-davy-gray', title: 'En progreso' };
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -248,7 +259,7 @@ export default function ProjectsClient({ tenants }: { tenants: Tenant[] }) {
           </button>
         )}
         <span className="text-davy-gray text-sm self-center ml-auto">
-          {filtered.length} project{filtered.length !== 1 ? 's' : ''}
+          {filtered.length} proyecto{filtered.length !== 1 ? 's' : ''} · {countIP} en investigación · {countMP} en producción · {countListos} listos para exportar
         </span>
       </div>
 
@@ -273,6 +284,7 @@ export default function ProjectsClient({ tenants }: { tenants: Tenant[] }) {
         <div className="space-y-3">
           {filtered.map((project) => {
             const phaseIndex = PIPELINE_PHASES.indexOf(project.status);
+            const health = healthDot(project.status);
             return (
               <Link
                 key={project.id}
@@ -282,6 +294,10 @@ export default function ProjectsClient({ tenants }: { tenants: Tenant[] }) {
                 <div className="flex items-start justify-between gap-4 mb-3">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
+                      <span
+                        className={`inline-block w-2 h-2 rounded-full ${health.color}`}
+                        title={health.title}
+                      />
                       <span className="text-xs font-mono text-amber-brand">
                         {project.publicId}
                       </span>
