@@ -1604,3 +1604,46 @@ El operador puede guardar como bookmark "/projects?phase=investigapress"
 para tener siempre el listado de proyectos IP activos. Puede compartir
 el link filtrado con un colaborador. El boton de retroceso del browser
 funciona correctamente entre estados de filtro.
+
+### Chunk 27 — Dashboard de estado del pipeline [COMPLETADO 15 abril 2026]
+
+- **27A** `b71f248` feat(chunk27ab): metricas listing — linea de
+  contadores sobre proyectos filtrados: total · en investigacion ·
+  en produccion · listos para exportar. Calculados sobre el array
+  filtered (post-filtros), no sobre el total del server.
+
+- **27B** `b71f248` feat(chunk27ab): health dot por status en cada
+  card del listing. Dot 8px (w-2 h-2 rounded-full) con color segun
+  status: rojo (draft), amber (pesquisa, visual), verde (aprobado,
+  exportado), gris (resto). Tooltip via title="..." con descripcion
+  del estado. Insertado antes del publicId en el row header de la
+  card sin alterar layout.
+
+- **27C** descartado — expansion inline de card. Complejidad no
+  justificada en esta fase. Queda como deuda futura cuando el
+  volumen de proyectos requiera preview sin navegar.
+
+Decision arquitectonica registrada: la visibilidad ejecutiva del
+pipeline se implementa en la capa de listing (client-side, sobre
+datos ya disponibles) sin agregar endpoints ni campos nuevos al
+backend. El health dot usa solo el campo status, disponible en el
+listing, sin necesidad de cargar el objeto data completo. Si en el
+futuro se necesita salud basada en score IP o dias sin actividad,
+el listing debera incluir campos adicionales del SELECT de Drizzle.
+
+## Hallazgos de validacion — Chunk 27 (15 abril 2026)
+
+### a) La linea de metricas como orientacion rapida del pipeline
+
+Con cuatro numeros en una sola linea el operador puede evaluar el
+estado global del portfolio en menos de un segundo: cuantos proyectos
+hay en investigacion activa, cuantos en produccion editorial, y
+cuantos estan bloqueando la cola de exportacion. No requiere
+interaccion — la informacion esta siempre visible.
+
+### b) El health dot es informacion sin friccion
+
+Un dot de 8px no interrumpe el escaneo visual del listing pero
+permite detectar proyectos problematicos (rojo) o pendientes de
+accion (amber) sin abrir cada proyecto individualmente. El tooltip
+da contexto suficiente para saber que accion tomar.
