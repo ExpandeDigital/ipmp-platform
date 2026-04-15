@@ -136,6 +136,8 @@ interface Fuente {
   archivo_nombre_v1?: string;
   archivo_size_v1?: number;
   archivo_replaced_at?: string;
+  // Chunk 29: marca de fuente principal del expediente (solo una por proyecto)
+  principal?: boolean;
   // Trazabilidad: cuando una fuente fue auto-promovida desde el VHP (Chunk 7B)
   origen?: 'manual' | 'vhp';
   origen_validacion_id?: string;
@@ -602,6 +604,8 @@ function parseFuenteFromRaw(f: Record<string, unknown>): Fuente {
     origen,
     origen_validacion_id:
       typeof f.origen_validacion_id === 'string' ? f.origen_validacion_id : undefined,
+    // Chunk 29: marca de fuente principal
+    principal: f.principal === true ? true : undefined,
   };
 }
 
@@ -2374,6 +2378,33 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
     }
   }
 
+  // ── Chunk 29: marcar/desmarcar fuente principal del expediente ──
+  async function handleMarcarPrincipal(id: string) {
+    if (!project) return;
+    const fuentesActuales: Fuente[] = Array.isArray(project.data?.fuentes)
+      ? (project.data.fuentes as unknown[]).map((f) =>
+          parseFuenteFromRaw(f as Record<string, unknown>)
+        )
+      : [];
+    const target = fuentesActuales.find((x) => x.id === id);
+    if (!target) return;
+    const nuevoEstado = !target.principal;
+    // Solo una principal por proyecto: al marcar una, desmarca las demas
+    const nuevasFuentes: Fuente[] = fuentesActuales.map((f) => ({
+      ...f,
+      principal: f.id === id ? nuevoEstado : false,
+    }));
+    setOdfGuardando(true);
+    setOdfError(null);
+    try {
+      await persistirFuentes(nuevasFuentes);
+    } catch (err) {
+      setOdfError(err instanceof Error ? err.message : 'Error al marcar principal');
+    } finally {
+      setOdfGuardando(false);
+    }
+  }
+
   // ── Upload / Delete de archivo adjunto por fuente — Chunk 15B ──
   async function handleUploadArchivo(fuenteId: string, file: File) {
     if (!project) return;
@@ -3846,7 +3877,19 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                   <div className="flex items-center justify-between mb-3">
                     <h3 className="text-seasalt font-semibold text-sm">Expediente de fuentes</h3>
                     <span className="text-davy-gray text-xs">
-                      {currentFuentes.length} fuente{currentFuentes.length !== 1 ? 's' : ''}
+                      {(() => {
+                        // Chunk 29 PASO 3: resumen de estado de las fuentes
+                        if (currentFuentes.length === 0) return 'Sin fuentes cargadas';
+                        const total = currentFuentes.length;
+                        const verificadas = currentFuentes.filter((f) => f.estado === 'verificada').length;
+                        const porContactar = currentFuentes.filter((f) => f.estado === 'por_contactar').length;
+                        const conArchivo = currentFuentes.filter((f) => !!f.archivo_url).length;
+                        const parts: string[] = [`${total} fuente${total !== 1 ? 's' : ''}`];
+                        if (verificadas > 0) parts.push(`${verificadas} verificada${verificadas !== 1 ? 's' : ''}`);
+                        if (porContactar > 0) parts.push(`${porContactar} por contactar`);
+                        if (conArchivo > 0) parts.push(`${conArchivo} con archivo`);
+                        return parts.join(' · ');
+                      })()}
                     </span>
                   </div>
 
@@ -3862,7 +3905,11 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                       {currentFuentes.map((f) => (
                         <div
                           key={f.id}
-                          className="bg-space-cadet rounded-lg border border-davy-gray/30 p-4 hover:border-amber-brand/30 transition-colors"
+                          className={`bg-space-cadet rounded-lg border p-4 transition-colors ${
+                            f.principal
+                              ? 'border-amber-brand/60 hover:border-amber-brand'
+                              : 'border-davy-gray/30 hover:border-amber-brand/30'
+                          }`}
                         >
                           <div className="flex items-start justify-between gap-3 mb-2">
                             <div className="flex-1 min-w-0">
@@ -3884,6 +3931,18 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                                 >
                                   Confianza: {f.confianza}
                                 </span>
+                                {/* Chunk 29 PASO 1: indicador de archivo adjunto */}
+                                {f.archivo_url ? (
+                                  <span className="text-xs text-green-400">📎 Con archivo</span>
+                                ) : (
+                                  <span className="text-xs text-davy-gray/50">Sin archivo</span>
+                                )}
+                                {/* Chunk 29 PASO 2: badge de fuente principal */}
+                                {f.principal && (
+                                  <span className="text-[10px] px-2 py-0.5 rounded border border-amber-brand/60 text-amber-brand bg-amber-brand/10">
+                                    ★ Principal
+                                  </span>
+                                )}
                               </div>
                               <h4 className="text-seasalt font-semibold text-sm break-words">
                                 {f.nombre_titulo}
@@ -3903,6 +3962,23 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                               )}
                             </div>
                             <div className="flex gap-1 shrink-0">
+                              {/* Chunk 29 PASO 2: toggle de fuente principal */}
+                              <button
+                                onClick={() => handleMarcarPrincipal(f.id)}
+                                disabled={odfGuardando}
+                                className={`text-xs px-2 py-1 transition-colors ${
+                                  f.principal
+                                    ? 'text-amber-brand hover:text-amber-brand/70'
+                                    : 'text-davy-gray hover:text-amber-brand'
+                                }`}
+                                title={
+                                  f.principal
+                                    ? 'Fuente principal del expediente (click para desmarcar)'
+                                    : 'Marcar como fuente principal'
+                                }
+                              >
+                                {f.principal ? '★' : '☆'}
+                              </button>
                               <button
                                 onClick={() => handleEditarFuente(f)}
                                 className="text-xs text-davy-gray hover:text-amber-brand px-2 py-1"
