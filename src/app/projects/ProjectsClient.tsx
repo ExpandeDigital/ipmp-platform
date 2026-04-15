@@ -8,6 +8,7 @@
  */
 
 import { useState, useEffect } from 'react';
+import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 
 // ── Tipos ────────────────────────────────────────────
@@ -57,6 +58,9 @@ const STATUS_LABELS: Record<string, string> = {
   exportado: 'Exportado',
 };
 
+const INVESTIGAPRESS_STATUSES = ['draft', 'validacion', 'pesquisa'];
+const METRICPRESS_STATUSES = ['produccion', 'revision', 'aprobado', 'visual', 'exportado'];
+
 const STATUS_COLORS: Record<string, string> = {
   draft: 'bg-davy-gray/30 text-davy-gray',
   validacion: 'bg-blue-500/20 text-blue-300',
@@ -70,17 +74,53 @@ const STATUS_COLORS: Record<string, string> = {
 
 // ── Componente ───────────────────────────────────────
 export default function ProjectsClient({ tenants }: { tenants: Tenant[] }) {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [filterTenant, setFilterTenant] = useState('');
-  const [filterStatus, setFilterStatus] = useState('');
-  const [filterTitle, setFilterTitle] = useState('');
-  const [titleInput, setTitleInput] = useState('');
+  const [filterTenant, setFilterTenant] = useState(
+    searchParams.get('tenant') ?? ''
+  );
+  const [filterStatus, setFilterStatus] = useState(
+    searchParams.get('status') ?? ''
+  );
+  const [titleInput, setTitleInput] = useState(
+    searchParams.get('q') ?? ''
+  );
+  const [filterTitle, setFilterTitle] = useState(
+    searchParams.get('q') ?? ''
+  );
+  const [filterPhase, setFilterPhase] = useState(
+    searchParams.get('phase') ?? ''
+  );
+
+  const updateURL = (params: Record<string, string>) => {
+    const current = new URLSearchParams(Array.from(searchParams.entries()));
+    Object.entries(params).forEach(([key, value]) => {
+      if (value) {
+        current.set(key, value);
+      } else {
+        current.delete(key);
+      }
+    });
+    router.replace(`${pathname}?${current.toString()}`, { scroll: false });
+  };
 
   useEffect(() => {
     loadProjects();
   }, []);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setFilterTitle(titleInput);
+      updateURL({ q: titleInput });
+    }, 300);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [titleInput]);
 
   async function loadProjects() {
     try {
@@ -101,8 +141,12 @@ export default function ProjectsClient({ tenants }: { tenants: Tenant[] }) {
     if (filterTenant && p.tenantSlug !== filterTenant) return false;
     if (filterStatus && p.status !== filterStatus) return false;
     if (filterTitle && !p.title.toLowerCase().includes(filterTitle.toLowerCase())) return false;
+    if (filterPhase === 'investigapress' && !INVESTIGAPRESS_STATUSES.includes(p.status)) return false;
+    if (filterPhase === 'metricpress' && !METRICPRESS_STATUSES.includes(p.status)) return false;
     return true;
   });
+
+  const hasActiveFilters = Boolean(filterTenant || filterStatus || filterTitle || filterPhase);
 
   if (loading) {
     return (
@@ -127,7 +171,11 @@ export default function ProjectsClient({ tenants }: { tenants: Tenant[] }) {
       <div className="flex gap-3 flex-wrap items-center">
         <select
           value={filterTenant}
-          onChange={(e) => setFilterTenant(e.target.value)}
+          onChange={(e) => {
+            const value = e.target.value;
+            setFilterTenant(value);
+            updateURL({ tenant: value });
+          }}
           className="bg-space-cadet border border-davy-gray/50 rounded px-3 py-2 text-seasalt text-sm focus:outline-none focus:border-amber-brand"
         >
           <option value="">Todos los tenants</option>
@@ -137,7 +185,11 @@ export default function ProjectsClient({ tenants }: { tenants: Tenant[] }) {
         </select>
         <select
           value={filterStatus}
-          onChange={(e) => setFilterStatus(e.target.value)}
+          onChange={(e) => {
+            const value = e.target.value;
+            setFilterStatus(value);
+            updateURL({ status: value });
+          }}
           className="bg-space-cadet border border-davy-gray/50 rounded px-3 py-2 text-seasalt text-sm focus:outline-none focus:border-amber-brand"
         >
           <option value="">Todos los estados</option>
@@ -145,24 +197,34 @@ export default function ProjectsClient({ tenants }: { tenants: Tenant[] }) {
             <option key={phase} value={phase}>{STATUS_LABELS[phase]}</option>
           ))}
         </select>
+        <select
+          value={filterPhase}
+          onChange={(e) => {
+            const value = e.target.value;
+            setFilterPhase(value);
+            updateURL({ phase: value });
+          }}
+          className="bg-space-cadet border border-davy-gray/50 rounded px-3 py-2 text-seasalt text-sm focus:outline-none focus:border-amber-brand"
+        >
+          <option value="">Todas las fases</option>
+          <option value="investigapress">InvestigaPress</option>
+          <option value="metricpress">MetricPress</option>
+        </select>
         <div className="flex gap-1.5">
           <input
             type="text"
             value={titleInput}
             onChange={(e) => setTitleInput(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') setFilterTitle(titleInput); }}
-            placeholder="Buscar por titulo..."
+            placeholder="🔍 Buscar por titulo..."
             className="bg-space-cadet border border-davy-gray/50 rounded px-3 py-2 text-seasalt text-sm focus:outline-none focus:border-amber-brand w-52"
           />
-          <button
-            onClick={() => setFilterTitle(titleInput)}
-            className="bg-space-cadet border border-davy-gray/50 rounded px-3 py-2 text-seasalt text-sm hover:border-amber-brand transition-colors"
-          >
-            Buscar
-          </button>
           {filterTitle && (
             <button
-              onClick={() => { setTitleInput(''); setFilterTitle(''); }}
+              onClick={() => {
+                setTitleInput('');
+                setFilterTitle('');
+                updateURL({ q: '' });
+              }}
               className="bg-space-cadet border border-davy-gray/50 rounded px-2 py-2 text-davy-gray text-sm hover:text-seasalt hover:border-amber-brand transition-colors"
               title="Limpiar busqueda"
             >
@@ -170,6 +232,21 @@ export default function ProjectsClient({ tenants }: { tenants: Tenant[] }) {
             </button>
           )}
         </div>
+        {hasActiveFilters && (
+          <button
+            onClick={() => {
+              setFilterTenant('');
+              setFilterStatus('');
+              setTitleInput('');
+              setFilterTitle('');
+              setFilterPhase('');
+              router.replace(pathname, { scroll: false });
+            }}
+            className="text-sm text-gray-400 hover:text-white underline"
+          >
+            Limpiar filtros
+          </button>
+        )}
         <span className="text-davy-gray text-sm self-center ml-auto">
           {filtered.length} project{filtered.length !== 1 ? 's' : ''}
         </span>
