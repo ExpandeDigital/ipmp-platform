@@ -56,7 +56,6 @@ const VALID_TOOLS: ToolName[] = [
   'generador_angulos',
   'validador_tono',
   'validador_tono_ip',
-  'constructor_pitch',
   'validador_hipotesis_pista',
   'generador_borrador',
   'generador_borrador_ip',

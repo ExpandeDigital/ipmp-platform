@@ -161,21 +161,6 @@ export default async function HomePage() {
                 </p>
               </div>
 
-              {/* Placeholder: Constructor de Pitch */}
-              <div className="bg-space-cadet/50 rounded-lg p-6 border border-davy-gray/20 opacity-50">
-                <div className="flex items-start justify-between mb-3">
-                  <span className="text-2xl">◇</span>
-                  <span className="text-xs font-mono text-davy-gray bg-davy-gray/10 px-2 py-0.5 rounded">
-                    PRÓXIMA
-                  </span>
-                </div>
-                <h3 className="text-lg font-bold mb-1">Constructor de Pitch</h3>
-                <p className="text-davy-gray text-sm">
-                  Genera emails de pitch personalizados por editor y medio
-                  objetivo.
-                </p>
-              </div>
-
               {/* Placeholder: Analizador de Sentimiento */}
               <div className="bg-space-cadet/50 rounded-lg p-6 border border-davy-gray/20 opacity-50">
                 <div className="flex items-start justify-between mb-3">

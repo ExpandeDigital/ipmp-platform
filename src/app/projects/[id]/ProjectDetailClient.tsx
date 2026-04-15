@@ -198,20 +198,6 @@ interface AngulosLegacy {
   generadoEn: string;
 }
 
-interface PitchData {
-  pitch: Record<string, unknown>;
-  texto_completo: string;
-  medio_destino: string;
-  notas_estrategicas: string;
-  angulo_titulo: string;
-  generadoEn: string;
-  // Chunk 11B: metadata de editor elegido
-  tierObjetivo?: number;
-  editorId?: string;
-  editorNombreSnapshot?: string;
-  editorMedioSnapshot?: string;
-}
-
 // Chunk 11B — Sugerencias de editores
 type MatchLevel = 'exacto' | 'sin_tipo' | 'sin_tenant';
 
@@ -1989,13 +1975,6 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
     }
     if (b.cierre) userMessage += `CIERRE:\n${b.cierre}\n`;
 
-    // Pitch como contexto adicional (medio destino informa el estilo visual)
-    const pitchRaw = dataObj.pitch as Record<string, unknown> | undefined;
-    if (pitchRaw && typeof pitchRaw === 'object') {
-      const medioDestino = String(pitchRaw.medio_destino ?? '');
-      if (medioDestino) userMessage += `\nMEDIO DESTINO: ${medioDestino}\n`;
-    }
-
     if (m.fuentes_citadas.length > 0) {
       userMessage += `\nFUENTES CITADAS:\n`;
       m.fuentes_citadas.forEach((f) => {
@@ -2656,24 +2635,6 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
     }
   } catch {
     savedValidacionLegacy = null;
-  }
-
-  // ── Pitch guardado ──
-  let savedPitch: PitchData | null = null;
-  try {
-    const raw = project.data?.pitch as Record<string, unknown> | undefined;
-    if (raw && typeof raw === 'object' && raw.texto_completo) {
-      savedPitch = {
-        pitch: (raw.pitch as Record<string, unknown>) ?? {},
-        texto_completo: String(raw.texto_completo ?? ''),
-        medio_destino: String(raw.medio_destino ?? ''),
-        notas_estrategicas: String(raw.notas_estrategicas ?? ''),
-        angulo_titulo: String(raw.angulo_titulo ?? ''),
-        generadoEn: String(raw.generadoEn ?? ''),
-      };
-    }
-  } catch {
-    savedPitch = null;
   }
 
   // ── Tenant seleccionado para traspaso ──
@@ -5204,12 +5165,10 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                 {(() => {
                   const dataObj = (project.data ?? {}) as Record<string, unknown>;
                   const borradorRaw = dataObj.borrador as Record<string, unknown> | undefined;
-                  const pitchRaw = dataObj.pitch as Record<string, unknown> | undefined;
                   const promptVisualRaw = dataObj.prompt_visual as Record<string, unknown> | undefined;
                   const hasBorrador = borradorRaw && typeof borradorRaw === 'object';
                   const borrContenidoExport = hasBorrador ? ((borradorRaw as Record<string, unknown>).contenido ?? (borradorRaw as Record<string, unknown>).borrador) as Record<string, unknown> | undefined : undefined;
                   const borradorTitulo = borrContenidoExport ? String(borrContenidoExport.titulo ?? '') : '';
-                  const medioDestino = pitchRaw ? String(pitchRaw.medio_destino ?? '') : '';
 
                   return (
                     <>
@@ -5224,10 +5183,6 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                             ) : (
                               <span className="text-red-400">Sin borrador</span>
                             )}
-                          </div>
-                          <div>
-                            <span className="text-davy-gray">Medio destino:</span>{' '}
-                            <span className="text-seasalt">{medioDestino || 'No definido'}</span>
                           </div>
                         </div>
                       </div>
@@ -5858,33 +5813,6 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                   Nota Editorial
                 </p>
                 <p className="text-seasalt/80 text-sm">{savedAngulosLegacy.notaEditorial}</p>
-              </div>
-            )}
-          </section>
-        )}
-
-        {/* ── Pitch Guardado ── */}
-        {savedPitch && (
-          <section className="bg-space-cadet rounded-lg border border-davy-gray/20 p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-seasalt font-semibold">📨 Pitch Editorial</h2>
-              <p className="text-davy-gray text-xs">
-                Medio: <span className="text-seasalt">{savedPitch.medio_destino}</span>
-              </p>
-            </div>
-
-            <div className="bg-oxford-blue rounded-lg border border-davy-gray/15 p-5">
-              <p className="text-seasalt text-sm whitespace-pre-wrap leading-relaxed">
-                {savedPitch.texto_completo}
-              </p>
-            </div>
-
-            {savedPitch.notas_estrategicas && (
-              <div className="mt-4 pt-4 border-t border-davy-gray/20">
-                <p className="text-davy-gray text-xs uppercase tracking-wider mb-1">
-                  Notas Estratégicas
-                </p>
-                <p className="text-seasalt/80 text-sm">{savedPitch.notas_estrategicas}</p>
               </div>
             )}
           </section>

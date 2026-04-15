@@ -11,7 +11,6 @@
  *   - buildAngulosPrompt() → periodismo puro, sin marca
  *   - buildAngulosPromptMP() → con contexto de marca (MetricPress)
  *   - buildValidadorTonoPrompt() → completo
- *   - buildConstructorPitchPrompt() → completo
  */
 
 // ── REGLA DE IDIOMA NEUTRO (Chunk 12B) ──────────────
@@ -205,59 +204,6 @@ Los valores posibles de "veredicto" son:
 - "publicable_con_cambios": Publicable tras correcciones menores señaladas
 - "requiere_revision": Necesita reescritura parcial o investigación adicional
 - "no_publicable": Problemas estructurales graves, rehacer`;
-}
-
-// ── HERRAMIENTA 3: Constructor de Pitch (InvestigaPress) ──
-// Chunk 12E: refactorizado para consumir borrador validado en vez de angulo libre.
-// El userMessage que recibe ya contiene el borrador completo estructurado
-// (titulo, bajada, lead, cuerpo, cierre, fuentes citadas, verificaciones).
-export function buildConstructorPitchPrompt(): string {
-  return `${IDIOMA_NEUTRO_RULE}Eres un especialista en media relations y pitching periodistico para America Latina. Tu trabajo es transformar un borrador periodistico validado en un pitch profesional listo para enviar a editores de medios.
-
-DIFERENCIA CRITICA — BORRADOR vs PITCH:
-El borrador es el articulo completo con todas sus secciones, fuentes citadas y verificaciones. El pitch es un resumen ejecutivo de venta editorial: debe convencer a un editor de que esta historia merece espacio en su medio. No copies parrafos enteros del borrador — sintetiza, destaca los hallazgos principales, y presenta la propuesta de forma escaneable.
-
-TU TAREA:
-Te paso un borrador periodistico validado con sus fuentes citadas y verificaciones. Transforma ese borrador en un pitch profesional para un editor externo. El pitch debe reflejar exclusivamente lo que esta documentado en el borrador y sus fuentes. No agregues datos, fechas, nombres, cifras ni afirmaciones que no aparezcan en el borrador. Si el borrador tiene verificaciones pendientes marcadas, el pitch debe omitirlas o marcarlas explicitamente como pendientes con [PENDIENTE], no como afirmaciones.
-
-ESTRUCTURA DEL PITCH:
-1. ASUNTO: Linea de asunto para email (maximo 80 caracteres, sin clickbait, con gancho noticioso derivado del titulo del borrador)
-2. APERTURA: 1-2 oraciones que enganchan al editor. Dato duro del borrador o pregunta provocadora derivada del lead. Nada de "me dirijo a usted para..."
-3. PROPUESTA: Que historia estas proponiendo, en 3-4 oraciones. Incluye el hallazgo principal del borrador, por que es relevante AHORA, y que lo diferencia de lo ya publicado.
-4. EVIDENCIA: 2-3 datos o hechos que respaldan la relevancia, extraidos de las fuentes citadas del borrador. Cada dato con su fuente tal como aparece en el borrador. Si no hay fuentes citadas, el campo evidencia queda con un unico item: {"dato": "Sin fuentes documentadas en el borrador actual", "fuente": "Borrador en modo diagnostico"}.
-5. ACCESO: Que fuentes o acceso puedes ofrecer, basandote en las fuentes citadas del borrador. Se honesto: solo menciona fuentes que el borrador confirma como contactadas o verificadas.
-6. FORMATO: Extension estimada, si incluye multimedia, plazo de entrega propuesto.
-7. CIERRE: 1 oracion de cierre profesional. Sin adulacion.
-
-REGLAS:
-- ANTI-FABRICACION ABSOLUTA: NO inventes datos, fuentes, cifras, nombres ni afirmaciones que no esten en el borrador. El pitch es un derivado del borrador, no un documento independiente. Si el borrador no lo dice, el pitch no puede decirlo.
-- VERIFICACIONES PENDIENTES: Si el borrador lista verificaciones criticas pendientes, NO las presentes como hechos confirmados en el pitch. Omitilas o marcalas con [PENDIENTE].
-- TONO: Profesional pero no burocratico. Directo. Un editor recibe decenas de pitches al dia — el tuyo debe ser escaneable en 30 segundos.
-- PERSONALIZACION: Si se indica un medio destino, adapta el tono y la relevancia al perfil de ese medio.
-- NO usar frases como "estimado editor", "le escribo para", "seria un honor". Ir al grano.
-
-FORMATO DE RESPUESTA:
-Responde UNICAMENTE con un JSON valido, sin markdown, sin backticks, sin texto antes ni despues.
-{
-  "pitch": {
-    "asunto": "...",
-    "apertura": "...",
-    "propuesta": "...",
-    "evidencia": [
-      {"dato": "...", "fuente": "..."}
-    ],
-    "acceso": "...",
-    "formato": {
-      "extension_palabras": 1200,
-      "multimedia": "Fotografias disponibles / infografia propuesta / sin multimedia",
-      "plazo_entrega": "5 dias habiles desde aprobacion"
-    },
-    "cierre": "..."
-  },
-  "texto_completo": "El pitch armado como texto corrido listo para copiar y pegar en un email.",
-  "medio_destino": "Nombre del medio si fue especificado, o 'General' si no",
-  "notas_estrategicas": "1-2 oraciones con recomendaciones sobre timing, contexto noticioso o enfoque alternativo si el editor rechaza."
-}`;
 }
 
 // ── HERRAMIENTA 4: Validador de Hipótesis y Pista (InvestigaPress) ──
@@ -670,30 +616,6 @@ DIMENSIÓN ADICIONAL A EVALUAR:
    - Agregá esta dimensión al array de evaluacion con los mismos campos.`;
 }
 
-// ── Constructor de Pitch MetricPress (Chunk 12E: consume borrador validado) ──
-export function buildConstructorPitchPromptMP(
-  tenant: TenantContext,
-  _template: TemplateContext
-): string {
-  const basePrompt = buildConstructorPitchPrompt();
-
-  return `${basePrompt}
-
-──────────────────────────────────────
-CONTEXTO METRICPRESS (FASE DE PRODUCCION)
-──────────────────────────────────────
-El pitch se envia en nombre de una marca. El borrador que recibiste ya fue escrito bajo el blindaje de esta marca, asi que la voz del pitch debe ser coherente con la del borrador.
-
-MARCA: ${tenant.name}${tenant.brandVariant ? ` (variante: ${tenant.brandVariant})` : ''}
-PERFIL: ${tenant.systemPromptBase}
-
-REGLAS ADICIONALES METRICPRESS:
-- El pitch debe mencionar la marca como fuente o protagonista donde sea natural, siempre que el borrador lo respalde.
-- Incluye un campo adicional "vocero_sugerido" con cargo + institucion para la marca, derivado de las fuentes citadas del borrador si alguna corresponde a un vocero de la marca.
-- El tono debe ser coherente con la identidad de la marca y con la voz del borrador.
-- RECORDA: la regla anti-fabricacion del bloque base es absoluta. No agregues datos de la marca que no esten en el borrador.`;
-}
-
 // ── Validador de Hipótesis y Pista MetricPress (con contexto de marca) ──
 export function buildValidadorHipotesisPistaPromptMP(
   tenant: TenantContext,
@@ -779,7 +701,7 @@ REGLAS SOBRE LOS VALORES:
 - "estilo": elige el mas apropiado segun el genero y tono del borrador. Noticias facticas → fotoperiodismo o fotografia_documental. Opinion o analisis → ilustracion_editorial o ilustracion_conceptual. Datos o estadisticas → infografia.
 - "paleta_mood": derivala del tono_editorial del borrador, no la inventes arbitrariamente.
 - "composicion": basala en los elementos concretos mencionados en el texto.
-- "formato_proporciones": derivalo del medio_destino si esta disponible.
+- "formato_proporciones": elige el que mejor se adapte al genero del borrador (por defecto 16:9 digital).
 - "instruccion_uso": incluye el parametro de proporcion si corresponde.`;
 }
 
@@ -844,7 +766,6 @@ export type ToolName =
   | 'generador_angulos'
   | 'validador_tono'
   | 'validador_tono_ip'
-  | 'constructor_pitch'
   | 'validador_hipotesis_pista'
   | 'generador_borrador'
   | 'generador_borrador_ip'
@@ -857,7 +778,6 @@ export const IP_PROMPT_BUILDERS: Record<ToolName, () => string> = {
   generador_angulos: buildAngulosPrompt,
   validador_tono: buildValidadorTonoPrompt,
   validador_tono_ip: buildValidadorTonoBorradorIPPrompt,
-  constructor_pitch: buildConstructorPitchPrompt,
   validador_hipotesis_pista: buildValidadorHipotesisPistaPrompt,
   generador_borrador: buildGeneradorBorradorPrompt,
   generador_borrador_ip: buildGeneradorBorradorIPPrompt,
@@ -875,7 +795,6 @@ export const MP_PROMPT_BUILDERS: Record<
   validador_tono: buildValidadorTonoPromptMP,
   validador_tono_ip: (_tenant: TenantContext, _template: TemplateContext) =>
     buildValidadorTonoBorradorIPPrompt(),
-  constructor_pitch: buildConstructorPitchPromptMP,
   validador_hipotesis_pista: buildValidadorHipotesisPistaPromptMP,
   generador_borrador: buildGeneradorBorradorPromptMP,
   generador_borrador_ip: (_tenant: TenantContext, _template: TemplateContext) =>

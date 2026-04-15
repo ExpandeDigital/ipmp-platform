@@ -3,8 +3,9 @@
  *
  * GET /api/editores/sugerencias?tenantSlug={slug}&tier={1-4}&templateFamily={prensa|opinion|institucional|academico}
  *
- * Devuelve un subset de editores_agenda filtrado y clasificado para
- * alimentar el autopoblado del Constructor de Pitch.
+ * Devuelve un subset de editores_agenda filtrado por tenant + tier +
+ * familia de pieza. Habilitado para el selector de editor del proyecto
+ * (Chunk 28+: campo editorId en projects).
  *
  * Filtro duro (siempre aplicado en el query Drizzle):
  *   - activo = true
