@@ -113,6 +113,8 @@ export const projects = pgTable('projects', {
   thesis: text('thesis'),
   classification: text('classification').notNull().default('por_asignar'),
   data: jsonb('data').$type<Record<string, unknown>>().default({}),
+  // ── Chunk 28: editor asignado al proyecto (nullable) ──
+  editorId: uuid('editor_id').references(() => editoresAgenda.id),
   createdBy: uuid('created_by').references(() => users.id),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),

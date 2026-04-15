@@ -15,7 +15,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
-import { projects, tenants, templates } from '@/db/schema';
+import { projects, tenants, templates, editoresAgenda } from '@/db/schema';
 import { eq, like, count } from 'drizzle-orm';
 
 export const dynamic = 'force-dynamic';
@@ -162,10 +162,15 @@ async function findProject(idParam: string) {
       templateFamily: templates.family,
       templatePrefix: templates.idPrefix,
       templateReviewLevel: templates.reviewLevel,
+      editorId: projects.editorId,
+      editorNombre: editoresAgenda.nombre,
+      editorApellido: editoresAgenda.apellido,
+      editorMedio: editoresAgenda.medio,
     })
     .from(projects)
     .leftJoin(tenants, eq(projects.tenantId, tenants.id))
     .leftJoin(templates, eq(projects.templateId, templates.id))
+    .leftJoin(editoresAgenda, eq(projects.editorId, editoresAgenda.id))
     .where(condition)
     .limit(1);
 
@@ -224,6 +229,8 @@ interface PatchBody {
   brandVariant?: string;
   // Soft gate C4: operador confirma exportar sin score suficiente
   c4Acknowledged?: boolean;
+  // Chunk 28: asignacion de editor al proyecto (null = desasignar)
+  editorId?: string | null;
 }
 
 export async function PATCH(
@@ -245,6 +252,27 @@ export async function PATCH(
     const updates: Record<string, unknown> = {
       updatedAt: new Date(),
     };
+
+    // ── Chunk 28: asignacion de editor ──
+    if (body.editorId !== undefined) {
+      if (body.editorId === null) {
+        updates.editorId = null;
+      } else if (typeof body.editorId === 'string' && body.editorId.length > 0) {
+        const [editor] = await db
+          .select({ id: editoresAgenda.id })
+          .from(editoresAgenda)
+          .where(eq(editoresAgenda.id, body.editorId))
+          .limit(1);
+
+        if (!editor) {
+          return NextResponse.json(
+            { error: `Editor no encontrado: ${body.editorId}` },
+            { status: 404 }
+          );
+        }
+        updates.editorId = editor.id;
+      }
+    }
 
     // ── Traspaso: asignar tenant + template ──
     if (body.tenantSlug) {
@@ -537,6 +565,7 @@ export async function PATCH(
         data: updated.data,
         classification: updated.classification,
         updatedAt: updated.updatedAt,
+        editorId: updated.editorId,
         phase: isIPPhase ? 'investigapress' : 'metricpress',
         hasTenant: !!updated.tenantId,
         hasTemplate: !!updated.templateId,

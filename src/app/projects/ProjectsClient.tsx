@@ -33,6 +33,9 @@ interface Project {
   templateName: string;
   templateFamily: string;
   templatePrefix: string;
+  editorId: string | null;
+  editorNombre: string | null;
+  editorApellido: string | null;
 }
 
 // ── Constantes ───────────────────────────────────────
@@ -317,6 +320,11 @@ export default function ProjectsClient({ tenants }: { tenants: Tenant[] }) {
                   <div className="text-right shrink-0">
                     <p className="text-xs text-davy-gray">{project.tenantName}</p>
                     <p className="text-xs text-davy-gray/70">{project.templateName}</p>
+                    {project.editorNombre && (
+                      <p className="text-xs text-amber-brand/70">
+                        Editor: {project.editorNombre} {project.editorApellido ?? ''}
+                      </p>
+                    )}
                   </div>
                 </div>
 

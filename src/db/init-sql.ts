@@ -202,4 +202,10 @@ CREATE TABLE IF NOT EXISTS tenant_assets (
 
 CREATE INDEX IF NOT EXISTS idx_tenant_assets_tenant ON tenant_assets(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_tenant_assets_activo ON tenant_assets(activo);
+
+-- =====================================================
+-- Chunk 28: editor asignado a proyecto (nullable)
+-- =====================================================
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS editor_id UUID REFERENCES editores_agenda(id);
+CREATE INDEX IF NOT EXISTS idx_projects_editor ON projects(editor_id);
 `;

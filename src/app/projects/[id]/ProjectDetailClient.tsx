@@ -39,6 +39,11 @@ interface ProjectDetail {
   templateFamily: string | null;
   templatePrefix: string | null;
   templateReviewLevel: string | null;
+  // Chunk 28: editor asignado
+  editorId: string | null;
+  editorNombre: string | null;
+  editorApellido: string | null;
+  editorMedio: string | null;
   phase: 'investigapress' | 'metricpress';
   hasTenant: boolean;
   hasTemplate: boolean;
@@ -940,6 +945,19 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
   const [subiendoImagenVisual, setSubiendoImagenVisual] = useState(false);
   const [imagenVisualError, setImagenVisualError] = useState<string | null>(null);
 
+  // Chunk 28 — asignacion de editor al proyecto
+  interface EditorOption {
+    id: string;
+    nombre: string;
+    apellido: string;
+    medio: string;
+    activo: boolean;
+  }
+  const [editoresList, setEditoresList] = useState<EditorOption[]>([]);
+  const [asignandoEditor, setAsignandoEditor] = useState(false);
+  const [editorError, setEditorError] = useState<string | null>(null);
+  const [editorSavedFlash, setEditorSavedFlash] = useState(false);
+
   // ── Cargar project ──
   const fetchProject = useCallback(async () => {
     try {
@@ -958,6 +976,46 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
   useEffect(() => {
     fetchProject();
   }, [fetchProject]);
+
+  // Chunk 28 — cargar lista de editores al montar
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch('/api/editores');
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || 'Error cargando editores');
+        if (Array.isArray(json.editores)) {
+          setEditoresList(json.editores as EditorOption[]);
+        }
+      } catch (err) {
+        console.error('[editores] load error:', err);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Chunk 28 — asignar/desasignar editor al proyecto
+  async function handleAsignarEditor(editorId: string | null) {
+    if (!project) return;
+    setAsignandoEditor(true);
+    setEditorError(null);
+    try {
+      const res = await fetch(`/api/projects/${encodeURIComponent(project.id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ editorId }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Error asignando editor');
+      await fetchProject();
+      setEditorSavedFlash(true);
+      setTimeout(() => setEditorSavedFlash(false), 1500);
+    } catch (err) {
+      setEditorError(err instanceof Error ? err.message : 'Error desconocido');
+    } finally {
+      setAsignandoEditor(false);
+    }
+  }
 
   // ── Ajustar tab activo cuando cambia la fase ──
   useEffect(() => {
@@ -3208,6 +3266,37 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                 <span className="text-seasalt ml-2">{project.brandVariant}</span>
               </div>
             )}
+            {/* Chunk 28: editor asignado */}
+            <div className="col-span-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-davy-gray">Editor asignado:</span>
+                <select
+                  value={project.editorId ?? ''}
+                  onChange={(e) => handleAsignarEditor(e.target.value || null)}
+                  disabled={asignandoEditor}
+                  className="bg-oxford-blue border border-davy-gray/40 rounded px-2 py-1 text-seasalt text-xs focus:outline-none focus:border-amber-brand disabled:opacity-50"
+                >
+                  <option value="">Sin asignar</option>
+                  {editoresList
+                    .filter((ed) => ed.activo || ed.id === project.editorId)
+                    .map((ed) => (
+                      <option key={ed.id} value={ed.id}>
+                        {ed.nombre} {ed.apellido} — {ed.medio}
+                        {!ed.activo ? ' (inactivo)' : ''}
+                      </option>
+                    ))}
+                </select>
+                {asignandoEditor && (
+                  <span className="text-davy-gray text-xs italic">Guardando…</span>
+                )}
+                {editorSavedFlash && !asignandoEditor && (
+                  <span className="text-green-400 text-xs">✓ Guardado</span>
+                )}
+                {editorError && (
+                  <span className="text-red-400 text-xs">{editorError}</span>
+                )}
+              </div>
+            </div>
             <div>
               <span className="text-davy-gray">Creado:</span>
               <span className="text-seasalt ml-2">

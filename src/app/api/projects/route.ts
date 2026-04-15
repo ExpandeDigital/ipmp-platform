@@ -14,7 +14,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
-import { projects, tenants, templates } from '@/db/schema';
+import { projects, tenants, templates, editoresAgenda } from '@/db/schema';
 import { eq, desc, like, count, sql } from 'drizzle-orm';
 
 export const dynamic = 'force-dynamic';
@@ -44,10 +44,14 @@ export async function GET(request: NextRequest) {
         templateName: templates.name,
         templateFamily: templates.family,
         templatePrefix: templates.idPrefix,
+        editorId: projects.editorId,
+        editorNombre: editoresAgenda.nombre,
+        editorApellido: editoresAgenda.apellido,
       })
       .from(projects)
       .leftJoin(tenants, eq(projects.tenantId, tenants.id))
       .leftJoin(templates, eq(projects.templateId, templates.id))
+      .leftJoin(editoresAgenda, eq(projects.editorId, editoresAgenda.id))
       .orderBy(desc(projects.createdAt));
 
     // Filtrar en JS
