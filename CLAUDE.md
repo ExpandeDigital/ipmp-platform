@@ -1566,3 +1566,41 @@ base de Claude con corte agosto 2025. El expediente ODF gana siempre
 en caso de conflicto. La actualidad del brief es responsabilidad del
 expediente, no del modelo. El operador es el periodista; Claude es
 el redactor.
+
+### Chunk 26 — Filtros del Project Listing con persistencia URL [COMPLETADO 15 abril 2026]
+
+- **26A** `eb900fe` feat(chunk26a): filtros listing con persistencia
+  URL — fase, debounce titulo, limpiar.
+  ProjectsClient.tsx: useSearchParams + useRouter + usePathname
+  importados. Estados filterTenant, filterStatus, filterTitle,
+  titleInput, filterPhase inicializan desde URL params (?tenant=,
+  ?status=, ?q=, ?phase=). Funcion updateURL sincroniza estado React
+  con query params via router.replace sin scroll. Debounce 300ms en
+  input titulo reemplaza boton Buscar y onKeyDown Enter. Select de
+  fase nuevo (InvestigaPress / MetricPress) con filtrado client-side
+  via INVESTIGAPRESS_STATUSES y METRICPRESS_STATUSES. Boton Limpiar
+  filtros aparece solo cuando hay filtro activo, resetea todos los
+  estados y limpia la URL. Filtrado sigue siendo 100% client-side.
+
+Decision arquitectonica registrada: el filtrado del listing se
+mantiene client-side. El volumen de proyectos actual no justifica
+mover la logica a SQL. Los query params sirven exclusivamente para
+persistencia y compartibilidad de URL, no viajan al backend. Si el
+volumen crece a 500+ proyectos, migrar a server-side filtering en
+GET /api/projects con ILIKE y WHERE IN en Drizzle.
+
+## Hallazgos de validacion — Chunk 26 (15 abril 2026)
+
+### a) El filtro de fase es el mas valioso operativamente
+
+Con el pipeline dividido en InvestigaPress y MetricPress, el operador
+necesita ver rapidamente que proyectos estan en investigacion activa
+vs en produccion editorial. El filtro de fase resuelve esto en un
+click sin necesidad de recordar que statuses pertenecen a cada fase.
+
+### b) La persistencia en URL habilita flujos de trabajo nuevos
+
+El operador puede guardar como bookmark "/projects?phase=investigapress"
+para tener siempre el listado de proyectos IP activos. Puede compartir
+el link filtrado con un colaborador. El boton de retroceso del browser
+funciona correctamente entre estados de filtro.
