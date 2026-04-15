@@ -1745,3 +1745,134 @@ del operador: esta es la fuente que sostiene la hipotesis central.
 El borde amber y el badge hacen esa decision visible a simple vista.
 En el futuro, el prompt del generador de borrador puede priorizar
 la fuente principal para estructurar la apertura del texto.
+
+### Chunk 30 — Higiene tecnica y cierre documental retroactivo [PARCIAL 15 abril 2026]
+
+- **30A** `5b51a70` docs(chunk30a): cierre retroactivo del marcador
+  24G. La linea del marcador "[PENDIENTE] docs(chunk24g)" en el
+  Roadmap del Chunk 24 era factualmente falsa: el contenido
+  documental ya estaba presente en CLAUDE.md (escrito en sesiones
+  posteriores al cierre de codigo del Chunk 24). 30A consolida
+  formalmente la deuda documental marcando la linea como
+  "CONSOLIDADO RETROACTIVAMENTE EN CHUNK 30A".
+
+- **30B** `29462ec` chore(chunk30b): eliminacion total de residuos
+  del Constructor de Pitch. 15 ediciones distribuidas en 5 archivos.
+  Cierra superficie de ataque silenciosa via API (constructor_pitch
+  era invocable via POST /api/ai/generate aunque la UI ya no lo
+  expusiera). Decision arquitectonica del operador: cleanup total
+  (1a) sin retrocompat para data.pitch persistido en proyectos
+  legacy. Decisiones secundarias D.1 (cortar dependencia
+  data.pitch.medio_destino del Prompt Visual) y H.2 (preservar
+  endpoint /api/editores/sugerencias actualizando comentario JSDoc
+  porque habilita el selector de editor del Chunk 28). Build
+  verificado: 5.1s compile, 7.3s TypeScript, 26 rutas, 0 warnings,
+  0 errors.
+
+- **30C** [DIFERIDO 15 abril 2026] DROP TABLE de assets (DT-3) y
+  revisions (DT-4). Reconocimiento del PASO 0 completado y validado:
+  cero imports vivos, cero uso via Drizzle, cero superficies
+  inesperadas. Plan de eliminacion documentado: 3 ediciones en
+  init-sql.ts (eliminar CREATE TABLE bloques + insertar DROP TABLE
+  IF EXISTS CASCADE antes del backtick final del template string)
+  + 6 ediciones en schema.ts (definiciones, relations, references
+  en projectsRelations, comentario header). Diferido por decision
+  del operador: requiere coordinacion con backup de Railway y
+  ejecucion manual de POST /api/admin/init post-deploy. Verificacion
+  pendiente: SELECT COUNT(*) sobre assets y revisions en Railway
+  para confirmar que estan vacias antes del DROP CASCADE.
+
+- **30D** [DIFERIDO 15 abril 2026] Eliminacion del campo legacy
+  borrador? en BorradorData (DT-1). Diferido en bloque junto con
+  30C: requiere endpoint temporal /api/admin/legacy-audit (decision
+  2b del operador) que cuente proyectos con borrador en formato
+  antiguo antes de aprobar la eliminacion del campo. No iniciado.
+
+- **30E** [CONSOLIDADO INLINE 15 abril 2026] Este bloque de cierre
+  documental cumple la funcion del sub-chunk 30E originalmente
+  planificado. Captura el estado parcial del Chunk 30 al cierre
+  de sesion del 15 de abril.
+
+Decision arquitectonica registrada: el Chunk 30 se cierra parcial.
+30A y 30B son commits estables en origin/main. 30C y 30D quedan
+como deuda con plan validado, listas para retomar en sesion
+proxima sin trabajo de re-reconocimiento. Mantener separados
+los chunks de codigo y los de coordinacion con Railway es
+coherente con el principio de minimizar superficie de riesgo
+en deploys de schema.
+
+## Hallazgos de validacion — Chunk 30 (15 abril 2026)
+
+### a) La superficie de ataque silenciosa del registry de tools
+
+El descubrimiento de mayor valor del Chunk 30B fue identificar
+que constructor_pitch seguia siendo invocable via POST a
+/api/ai/generate aunque ningun cliente lo llamara. El registro
+de un tool en VALID_TOOLS + ToolName + builders es lo que define
+la superficie publica de la API de IA, no la presencia o ausencia
+de UI. Eliminar UI sin eliminar el registry deja la superficie
+abierta. Patron a seguir en futuras eliminaciones de tools:
+quitar primero del registry (cierra la superficie), despues del
+codigo de prompt, despues de la UI. El orden inverso deja
+ventanas de exposicion.
+
+### b) La asimetria visual como senal honesta de deuda
+
+El dashboard de page.tsx quedo con 3 hijos en un grid
+md:grid-cols-2 tras eliminar el placeholder del Constructor de
+Pitch. La opcion de rebalancear a md:grid-cols-3 fue
+explicitamente descartada: rebalancear hubiera ocultado que
+los otros dos placeholders ("Validador de Tono" obsoleto desde
+24B, "Analizador de Sentimiento" nunca construido) y el href
+roto de "Generador de Angulos" hacia /tools/angulos (eliminado
+en 9D) tambien son deuda. La asimetria es informacion: le dice
+al operador que esa seccion necesita revision integral. Pintar
+sobre el problema viola el Principio 2 de filantropia digital
+(honestidad sobre los limites del producto).
+
+### c) DT-5 emergente: tabla users huerfana
+
+Reconocimiento adicional durante el PASO 0 de 30C revelo que
+la tabla users (schema.ts:53) es codigo muerto a nivel TypeScript
+(cero imports en src/) pero tiene FKs entrantes vivas:
+projects.createdBy (sigue activa) y revisions.reviewerId (se
+auto-elimina con el DROP CASCADE de revisions cuando 30C se
+ejecute). Decision: NO incluida en 30C, queda como DT-5 para
+sub-chunk dedicado. La eliminacion de users requiere decision
+arquitectonica previa: se preserva por si el Chunk "Auth +
+apertura a operadores externos" (Chunk 22+ futuros) se reactiva,
+o se elimina como codigo muerto definitivo. Esa decision no
+se toma de oficio.
+
+### d) La metodologia aguanta los obstaculos de infraestructura
+
+El Chunk 30B atraveso multiples obstaculos no relacionados al
+contenido del trabajo: dos errores 500 de la API de Anthropic
+con request_id repetido (sintoma identico al bug de Vercel cache
+diagnosticado en 25A, esta vez del lado del proveedor), una
+sesion de Claude Code envenenada por contexto previo que
+fabrico una salida de npm run build que nunca ocurrio
+(paradoja: el ejecutor que construye IPMP cometio el pecado
+contra el cual IPMP fue disenado), bracketed paste de Git Bash
+corrompiendo heredocs multilinea, navegacion accidental fuera
+del directorio del repo. La metodologia aguanto porque cada
+obstaculo gatillo una detencion explicita en lugar de un avance
+a ciegas. La regla operativa que se desprende: cuando el
+ejecutor afirma haber visto datos que no aparecen en el
+contexto de la conversacion, detenerse y verificar antes de
+firmar. La cadena de custodia de los datos es responsabilidad
+del operador, no del ejecutor.
+
+### e) El reconocimiento previo como inversion no perdida
+
+El PASO 0 del Chunk 30C quedo completo y validado aunque el
+PASO 1 se diferio. El trabajo intelectual (reconocimiento, plan
+de eliminacion con anclas textuales, deteccion de DT-5 emergente,
+verificacion preventiva de imports huerfanos) esta documentado
+en este Chunk 30E y en el historial de la sesion. La proxima
+sesion retoma 30C sin trabajo de re-reconocimiento: solo
+ejecuta el PASO 1 y coordina el deploy a Railway. Patron
+generalizable: cuando una sesion no llega a cerrar un chunk
+de codigo pero si completo el reconocimiento, documentar el
+reconocimiento explicitamente preserva el valor para la sesion
+proxima.
