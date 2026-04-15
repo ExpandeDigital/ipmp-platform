@@ -1694,3 +1694,49 @@ el listing por editor asignado, enviar notificaciones al editor,
 y generar reportes de carga de trabajo por editor. El Chunk 28
 establece la infraestructura; las features de colaboracion avanzada
 se construyen encima sin cambios de schema.
+
+### Chunk 29 — ODF mejoras UX: indicador adjunto, fuente principal, header stats [COMPLETADO 15 abril 2026]
+
+- **29A** `f383fd1` feat(chunk29): ODF mejoras UX — indicador adjunto,
+  fuente principal, header con stats.
+  Interface Fuente: campo principal?: boolean agregado.
+  parseFuenteFromRaw: parseo estricto (=== true) para principal.
+  handleMarcarPrincipal: marca/desmarca fuente principal, garantiza
+  unicidad (limpia principal:false en todas las demas al marcar una).
+  Card de fuente: borde amber-brand/60 cuando principal, badge
+  "Principal" en amber, boton toggle estrella vacia/llena antes
+  de editar, indicador adjunto (icono 📎 verde / texto gris discreto)
+  en row de badges junto a confianza.
+  Header del listado ODF: reemplaza contador simple por string
+  "N fuentes · X verificadas · Y por contactar · Z con archivo",
+  omite counts en 0. Sin fuentes muestra "Sin fuentes cargadas".
+  Sin cambios en backend — persistirFuentes con PATCH merge existente
+  es suficiente para persistir el campo principal.
+
+Decision arquitectonica registrada: el campo principal se persiste
+dentro del objeto fuente en data.fuentes[] sin columna nueva en la
+tabla. La unicidad (solo una fuente principal por proyecto) se
+garantiza en el handler del frontend al momento de marcar, no en
+el backend. Si en el futuro se necesita consultar la fuente principal
+desde el backend (ej: para el generador de borrador), agregar logica
+de extraccion en el prompt builder que lea data.fuentes.find(f =>
+f.principal === true).
+
+## Hallazgos de validacion — Chunk 29 (15 abril 2026)
+
+### a) El header de stats del ODF como semaforo de calidad del expediente
+
+El string "N fuentes · X verificadas · Y por contactar · Z con archivo"
+le da al operador una lectura instantanea del estado del expediente
+sin abrir cada fuente. Un expediente con 5 fuentes pero 0 verificadas
+y 0 con archivo es visualmente distinto de uno con 5 verificadas y
+4 con archivo. Esta informacion es el input natural para decidir si
+el expediente esta listo para generar el borrador IP.
+
+### b) La fuente principal como ancla editorial del expediente
+
+Marcar una fuente como principal es una decision editorial explicita
+del operador: esta es la fuente que sostiene la hipotesis central.
+El borde amber y el badge hacen esa decision visible a simple vista.
+En el futuro, el prompt del generador de borrador puede priorizar
+la fuente principal para estructurar la apertura del texto.
