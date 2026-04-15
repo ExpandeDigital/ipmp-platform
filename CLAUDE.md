@@ -1513,3 +1513,56 @@ del gate, que era la mas dificil de satisfacer automaticamente.
     -> prompt visual + imagen externa
     -> [gate EXPORT_GATE_FAILED: 4 condiciones C1-C4]
     -> exportado: ZIP con 3 .docx + imagen + proyecto.json
+
+### Chunk 25 — Fix 529 y C4 soft gate [COMPLETADO 15 abril 2026]
+
+- **25A** `d6cf579` fix(ai): retry backoff exponencial 529 +
+  Cache-Control no-store en /api/ai/generate.
+  provider.ts: withRetry() con 3 reintentos, delays 1s/2s/4s,
+  detecta overloaded_error por status 529, error.type y mensaje.
+  route.ts: NO_CACHE_HEADERS = { Cache-Control: no-store } en
+  todos los return NextResponse.json() del endpoint.
+
+- **25B** `e7f7747` fix(export): C4 del gate de exportacion pasa
+  a soft gate en backend. ExportCondition interface agrega campo
+  soft?: boolean. evaluateExportGate() retorna hardPassed y c4Passed
+  separados. Advance a exportado: C1-C3 hard block con
+  EXPORT_GATE_FAILED; C4 separado con C4_ACK_REQUIRED si falla y
+  c4Acknowledged !== true en el body del PATCH.
+
+- **25C** `1df22d0` fix(export): C4 soft gate UI en
+  ProjectDetailClient.tsx. Estado c4Ack agregado, resetea al cerrar
+  y tras advance exitoso. Panel: borde amber cuando solo C4 falla,
+  icono warning amber en vez de X roja, checkbox de confirmacion
+  con texto descriptivo. Boton Exportar habilitado cuando C1-C3
+  pasan y (C4 pasa O c4Ack es true). handlePipelineAction envia
+  c4Acknowledged: true cuando c4Ack activo en fase visual.
+
+Decision arquitectonica registrada: C4 (validacion IP score >= 3.5)
+es una condicion de calidad recomendada, no un hard block. El operador
+puede exportar con score insuficiente firmando la decision con un
+checkbox explicito. Esto es coherente con el Principio 2 de
+filantropia digital y con la decision del Chunk 23 (soft gate en
+el traspaso). Los hard blocks del pipeline son y siguen siendo:
+BORRADOR_IP_REQUIRED, TRASPASO_REQUIRED, y C1-C3 del gate de
+exportacion.
+
+## Hallazgos de validacion — Chunk 25 (15 abril 2026)
+
+### a) El error 529 era un problema de cache de Vercel, no de Anthropic
+
+El request_id identico entre reintentos confirmo que Vercel servia
+la respuesta de error cacheada sin llegar al runtime. Cache-Control:
+no-store en todas las respuestas del endpoint es la solucion
+estructural. El retry con backoff es resiliencia adicional para
+sobrecargas reales de Anthropic.
+
+### b) Dos cortes epistemicos en paralelo en todo output de IPMP
+
+Todo contenido producido por IPMP tiene dos cortes que se aplican
+en paralelo: (1) el expediente ODF cargado por el operador, cuya
+fecha es la del documento mas reciente cargado; (2) el conocimiento
+base de Claude con corte agosto 2025. El expediente ODF gana siempre
+en caso de conflicto. La actualidad del brief es responsabilidad del
+expediente, no del modelo. El operador es el periodista; Claude es
+el redactor.
