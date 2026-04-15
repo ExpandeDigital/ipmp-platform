@@ -1470,7 +1470,12 @@ decision sea consciente.
   buildPitchDocx eliminado de export/route.ts. ZIP queda con 3 .docx
   (borrador, fuentes, hipotesis) + proyecto.json + imagen-visual.
 
-- **24G** [PENDIENTE] docs(chunk24g): cierre documental Chunk 24.
+- **24G** [CONSOLIDADO RETROACTIVAMENTE EN CHUNK 30A] El cierre
+  documental del Chunk 24 no tuvo commit dedicado en su momento.
+  El contenido de los hallazgos y el roadmap entry fueron
+  escritos en sesiones posteriores (Chunks 25+) y quedan
+  consolidados formalmente por el Chunk 30A. Ver seccion
+  "## Hallazgos de validacion — Chunk 24" mas abajo.
 
 Decision arquitectonica registrada: el Validador IP (pesquisa) es
 el unico validador del pipeline. Su score rige C4 del gate de
