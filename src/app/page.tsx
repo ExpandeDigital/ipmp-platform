@@ -1,11 +1,10 @@
 /**
  * IP+MP Platform — Dashboard del Operador
  *
- * Vista principal con estado del sistema y acceso a herramientas.
+ * Vista principal con estado del sistema del pipeline.
  * Evoluciona desde el "tablero de cimientos vivos" de Fase 0.
  */
 
-import Link from 'next/link';
 import Nav from '@/components/Nav';
 import { db } from '@/db';
 import { tenants, templates, projects, consumptionLogs } from '@/db/schema';
@@ -118,64 +117,6 @@ export default async function HomePage() {
                 {status.error}
               </pre>
             )}
-          </section>
-
-          {/* Herramientas */}
-          <section className="mb-10">
-            <h2 className="text-xs font-mono text-davy-gray uppercase tracking-wider mb-4">
-              Herramientas de Producción
-            </h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Generador de Ángulos */}
-              <Link
-                href="/tools/angulos"
-                className="group bg-space-cadet rounded-lg p-6 border border-davy-gray/30 hover:border-amber-brand/50 transition-colors"
-              >
-                <div className="flex items-start justify-between mb-3">
-                  <span className="text-2xl">◇</span>
-                  <span className="text-xs font-mono text-green-400 bg-green-400/10 px-2 py-0.5 rounded">
-                    ACTIVA
-                  </span>
-                </div>
-                <h3 className="text-lg font-bold mb-1 group-hover:text-amber-brand transition-colors">
-                  Generador de Ángulos Noticiosos
-                </h3>
-                <p className="text-davy-gray text-sm">
-                  Genera 5-8 ángulos periodísticos por tema, con tier de medio,
-                  audiencia, tono y nivel de riesgo.
-                </p>
-              </Link>
-
-              {/* Placeholder: Validador de Tono */}
-              <div className="bg-space-cadet/50 rounded-lg p-6 border border-davy-gray/20 opacity-50">
-                <div className="flex items-start justify-between mb-3">
-                  <span className="text-2xl">◇</span>
-                  <span className="text-xs font-mono text-davy-gray bg-davy-gray/10 px-2 py-0.5 rounded">
-                    PRÓXIMA
-                  </span>
-                </div>
-                <h3 className="text-lg font-bold mb-1">Validador de Tono</h3>
-                <p className="text-davy-gray text-sm">
-                  Analiza un borrador y valida que el tono sea consistente con
-                  la marca del tenant.
-                </p>
-              </div>
-
-              {/* Placeholder: Analizador de Sentimiento */}
-              <div className="bg-space-cadet/50 rounded-lg p-6 border border-davy-gray/20 opacity-50">
-                <div className="flex items-start justify-between mb-3">
-                  <span className="text-2xl">◇</span>
-                  <span className="text-xs font-mono text-davy-gray bg-davy-gray/10 px-2 py-0.5 rounded">
-                    PRÓXIMA
-                  </span>
-                </div>
-                <h3 className="text-lg font-bold mb-1">Analizador de Sentimiento</h3>
-                <p className="text-davy-gray text-sm">
-                  Evalúa el sentimiento y la percepción pública de un texto o
-                  cobertura mediática.
-                </p>
-              </div>
-            </div>
           </section>
 
           {/* Footer */}
