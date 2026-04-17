@@ -1876,3 +1876,262 @@ generalizable: cuando una sesion no llega a cerrar un chunk
 de codigo pero si completo el reconocimiento, documentar el
 reconocimiento explicitamente preserva el valor para la sesion
 proxima.
+
+### Chunk 31 — Disciplina editorial del pipeline IP: del Hito 1 al producto limpio [EN CURSO abril 2026]
+
+- **31A** `e631a2c` chore(chunk31a): eliminar seccion Herramientas de
+  Produccion del dashboard. Bloque de tres tarjetas obsoletas en
+  src/app/page.tsx eliminado (Generador de Angulos con href roto a
+  /tools/angulos, Validador de Tono placeholder obsoleto desde 24B,
+  Analizador de Sentimiento nunca construido). Import Link huerfano
+  eliminado. JSDoc actualizado. Resuelve hallazgo 30(b).
+
+- **31B** [DOCUMENTAL] Mapa canonico del pipeline IP y diagnostico
+  arquitectonico. Registra las decisiones de diseno del Chunk 31
+  completo, incluyendo la reestructuracion del pipeline con Gate 1a
+  y Hito 1. Sin codigo. Este bloque cumple la funcion del 31B.
+
+#### Mapa canonico del pipeline InvestigaPress — estado actual y reestructuracion
+
+##### Las 4 pestanas del detalle de proyecto (fase IP, pre-traspaso)
+
+El detalle de proyecto en fase IP presenta cuatro pestanas al operador.
+Cada una tiene una funcion distinta en el pipeline. La jerarquia entre
+ellas no estaba documentada antes de este chunk — esta seccion la fija.
+
+**Pestana 1 — Organizador de Fuentes Forenses (ODF).**
+Funcion: data entry del expediente forense. Punto de entrada unico
+para toda fuente que el operador levanto en trabajo de campo,
+investigacion web, entrevistas, o cualquier motor externo (incluyendo
+agentes de Sala de Redaccion). Cada fuente se cataloga con tipo,
+titulo, rol/origen, estado, confianza, notas, URL opcional y archivo
+adjunto opcional. Persiste en data.fuentes[]. Chunks 7, 16, 29.
+Produce: expediente forense (array de fuentes catalogadas).
+Viaja al traspaso: si — data.fuentes[] es insumo del borrador IP
+y del export.
+
+**Pestana 2 — Documento de Investigacion (Generador de Borrador IP).**
+Funcion: generacion asistida del borrador IP a partir del expediente
+forense + hipotesis elegida + notas editoriales del operador. El
+disparo es manual (boton "Generar documento de investigacion"). No es
+automatico: el operador decide cuando el expediente esta listo para
+generar, y puede inyectar contexto editorial via el campo de notas
+adicionales. Chunks 18, 20.
+Produce: borrador IP (data.borrador.contenido).
+Viaja al traspaso: si — el borrador IP es la base que MetricPress
+transforma en producto editorial publicable.
+
+**Pestana 3 — Validador IP.**
+Funcion: evaluacion de calidad del borrador IP generado en la
+Pestana 2. No valida los insumos (fuentes del ODF) sino el artefacto
+generado a partir de ellos. Produce veredicto con score, hallazgos y
+sugerencias. Historial acumulativo en data.validaciones_ip[]. Soft
+gate por score (Chunk 23): el operador puede avanzar con verdict bajo
+si confirma. Chunk 19C, 23, 25.
+Produce: veredicto de calidad (data.validaciones_ip[]).
+Viaja al traspaso: si — el historial de validaciones es parte del
+expediente de calidad del proyecto.
+
+**Pestana 4 — Radar Editorial.**
+Funcion: auditoria de cobertura existente de otros medios sobre el
+mismo tema. Opera sobre contenido externo (articulos publicados por
+otros), no sobre el expediente propio ni sobre el borrador IP. Es
+inteligencia competitiva editorial: detecta sesgos, faltas de rigor
+y oportunidades editoriales en la competencia.
+Produce: analisis de cobertura externa.
+Viaja al traspaso: no como insumo obligatorio. Es contexto editorial
+opcional para el operador.
+
+**Jerarquia y obligatoriedad para el traspaso IP a MP:**
+
+| Pestana | Obligatoriedad | Tipo de gate |
+|---------|---------------|-------------|
+| 1. ODF (fuentes) | Obligatoria (minimo 1 fuente) | Hard gate |
+| 2. Documento de Investigacion | Obligatoria (borrador IP generado) | Hard gate (BORRADOR_IP_REQUIRED, Chunk 18) |
+| 3. Validador IP | Recomendada (soft gate por score) | Soft gate (Chunk 23) |
+| 4. Radar Editorial | Opcional siempre | Sin gate |
+
+##### Flujo canonico del pipeline IP — version reestructurada (Chunk 31)
+
+El pipeline IP previo al Chunk 31 tenia un hueco arquitectonico entre
+la eleccion de hipotesis y la apertura de pesquisa: no existia ningun
+mecanismo formal para auditar la hipotesis elegida antes de invertir
+trabajo de pesquisa. El Chunk 31 cierra ese hueco con dos gates nuevos.
+
+**Pipeline IP previo (Chunks 1-30):**
+
+    creacion (titulo + tesis)
+      -> generacion de hipotesis (5 candidatas)
+      -> eleccion de hipotesis
+      -> pesquisa (ODF + fuentes)
+      -> borrador IP
+      -> validador IP
+      -> traspaso IP -> MP
+
+**Pipeline IP reestructurado (Chunk 31+):**
+
+    creacion (titulo + tesis)
+      -> Gate 1a: sanity check de supuestos factuales (llamada IA, bloqueante)
+      -> generacion de hipotesis (5 candidatas)
+      -> eleccion de hipotesis
+      -> Hito 1: validacion de hipotesis elegida (llamada IA, bloqueante)
+          salida 1: veredicto correctivo (hard gate — bloquea si hipotesis defectuosa)
+          salida 2: sugerencia optimizadora (informativa — muestra angulo mejor si existe)
+      -> pesquisa (ODF + fuentes)
+      -> borrador IP
+      -> validador IP
+      -> traspaso IP -> MP
+
+**Gate 1a — Sanity check de supuestos factuales.**
+Corre automaticamente al crear proyecto, antes de generar hipotesis.
+Es bloqueante: el operador ve un panel "Revision de supuestos" con
+los hallazgos y debe aprobar o corregir antes de ver las hipotesis
+generadas. Verifica supuestos factuales del enunciado: nombres propios
+institucionales, denominaciones oficiales, fechas, existencia de
+entidades referenciadas. No audita calidad periodistica — solo que
+la pregunta no parta de un supuesto falso.
+Implementacion: llamada IA real. Justificada por volumen bajo del
+producto (maximo 4 documentos por semana, ~16 llamadas adicionales
+al mes). El costo es irrelevante frente al valor de que ningun
+proyecto arranque desde un supuesto factual erroneo.
+
+**Hito 1 — Validacion de hipotesis elegida.**
+Corre despues de que el operador elige una hipotesis, antes de abrir
+pesquisa. Es bloqueante. Introduce un estado nuevo en pipelineStatus:
+hito_1. Tiene dos salidas separadas:
+- Veredicto correctivo (hard gate): evalua si la hipotesis es
+  coherente, falsable, factualmente viable como pregunta de
+  investigacion. Si no lo es, bloquea avance hasta reformulacion.
+- Sugerencia optimizadora (informativa): evalua si hay un angulo
+  adyacente con mas potencia periodistica. Se registra, se muestra
+  al operador, pero no bloquea. El operador decide si reformular
+  o proceder con lo que tiene.
+Los dos criterios estan separados por diseno. El correctivo pregunta
+"esta hipotesis no deberia avanzar". El optimizador pregunta "esta
+hipotesis podria ser mejor". Mezclarlos degrada ambos.
+
+##### Distincion entre registro forense interno y producto editorial publicable
+
+El pipeline IP produce dos tipos de artefacto que deben ser
+estructuralmente distintos. Esta distincion no estaba formalizada
+antes del Chunk 31.
+
+**Registro forense interno.** Documento destinado al equipo editorial
+y a la cadena de custodia. Registra como se llego al resultado:
+hipotesis original, reformulaciones, fuentes descartadas, cambios
+de angulo, verificaciones fallidas. Sirve para auditoria editorial,
+defensa ante errores de publicacion, y trazabilidad del proceso.
+Vive en el expediente del proyecto (data.fuentes[],
+data.validaciones_ip[], data.validacion_hipotesis, historial de
+generaciones). No se publica.
+
+**Producto editorial publicable.** Lo que lee el cliente final o el
+publico. No contiene cicatrices del proceso. Si la hipotesis fue
+reformulada, el producto final presenta la hipotesis correcta desde
+la primera linea — no explica como se llego a ella. Si una fuente
+fue descartada, el producto final no la menciona. El producto es
+limpio, directo, y asume que el lector no es parte de la
+investigacion.
+
+La separacion se implementa en dos capas:
+1. En los prompts de generacion (buildBorradorIP, prompts MP): el
+   prompt debe instruir al modelo a producir texto editorial limpio,
+   no bitacora forense. Sub-chunk 31F.
+2. En el export: el ZIP de export puede incluir ambos artefactos
+   (registro forense como anexo, producto editorial como pieza
+   principal), pero nunca mezclados en el mismo documento.
+
+#### Hallazgos que motivan el Chunk 31
+
+##### Hallazgo A — Hipotesis mal planteada detectada fuera de la plataforma (16 abril 2026)
+
+El operador creo un proyecto en IPMP con titulo y pregunta de
+investigacion, genero 5 hipotesis, eligio una, y la llevo a Sala
+de Redaccion (ecosistema de 22 agentes especializados en Claude
+Projects, orquestados como sistema multi-agente) para construir la
+fuente primaria a partir de investigacion con search. Los agentes
+de Sala de Redaccion detectaron dos problemas:
+1. La hipotesis estaba mal planteada desde la creacion del proyecto.
+2. La noticiabilidad tenia un angulo mas poderoso que la hipotesis
+   inicial.
+
+El pipeline IP no tenia ningun gate de auditoria entre la eleccion
+de hipotesis y la apertura de pesquisa. La deteccion ocurrio fuera
+de la plataforma, por agentes externos. El hallazgo motiva la
+creacion del Hito 1 como gate formal dentro del pipeline.
+
+##### Hallazgo B — Producto editorial arrastra cicatrices del proceso forense (17 abril 2026)
+
+Analisis de dos documentos reales producidos por IPMP para el caso
+"Hospital Arica 100" (proyecto METRICPRESS-VF-2026-0003 y
+INVESTIGAPRESS-ASL-2026-0001):
+
+El borrador IP (Verificacion Forense, 195 lineas) dedica las primeras
+~40 lineas a explicar por que el proyecto no se llama como se suponia.
+El titulo mismo arrastra la confusion: "Proyecto Hospital Arica 100:
+Investigacion de Existencia Formal". La seccion 2 completa se titula
+"Hallazgo Principal: Resolucion de la Confusion Terminologica".
+
+El policy brief (producto editorial publicable) hereda la cicatriz:
+su subtitulo es "La denominacion 'Hospital Arica 100' no existe
+oficialmente". El primer parrafo arranca explicando la confusion
+terminologica. Un lector de asesoria legislativa no abre un brief
+para enterarse de que el periodista se confundio con un nombre.
+
+Diagnostico: los prompts de generacion no distinguen entre registro
+forense (donde la cicatriz tiene valor documental) y producto
+editorial (donde la cicatriz es anti-valor). El producto final
+contiene trabajo editorial de alta calidad enterrado debajo de
+una narrativa de auto-aclaracion.
+
+Conexion entre hallazgos A y B: si el Gate 1a hubiera existido al
+crear el proyecto Arica 100, habria detectado que "Hospital Arica
+100" no es una denominacion oficial y habria pedido correccion antes
+de generar hipotesis. El producto final nunca habria necesitado
+explicar la confusion porque la confusion nunca habria entrado al
+pipeline.
+
+#### Plan de sub-chunks del Chunk 31
+
+| Sub-chunk | Nombre | Tipo | Dependencia |
+|-----------|--------|------|-------------|
+| 31A | Eliminacion seccion Herramientas de Produccion del dashboard | Codigo | Ninguna. CERRADO (e631a2c). |
+| 31B | Mapa canonico del pipeline IP y diagnostico arquitectonico | Documental | Ninguna. Este bloque. |
+| 31C | Gate 1a: sanity check de supuestos factuales | Codigo | 31B (requiere mapa canonico como contrato). |
+| 31D | Hito 1: validacion de hipotesis elegida | Codigo | 31C (Gate 1a debe existir primero; 31D introduce estado hito_1 en pipelineStatus). Sesion nueva. |
+| 31E | Verificaciones criticas como sistema real | Codigo | 31D (verificaciones se apoyan en hipotesis ya validada). |
+| 31F | Separacion forense/editorial en prompts | Codigo | 31D (requiere estados del pipeline estabilizados). |
+| 31G | Importador de borrador IP externo | Codigo | Candidato, no compromiso. Depende de decision futura sobre puenteo con Sala de Redaccion. |
+| 31H | Cierre documental del Chunk 31 | Documental | Todos los anteriores. |
+
+#### Decisiones arquitectonicas registradas — Chunk 31
+
+1. El pipeline IP se reestructura con dos gates nuevos (Gate 1a y
+   Hito 1) entre creacion y pesquisa. Ambos bloqueantes. Ambos con
+   llamada IA real. Justificado por volumen bajo (max 4 docs/semana).
+
+2. Gate 1a corre post-creacion, pre-generacion de hipotesis. Es
+   sanity check de supuestos factuales. UI bloqueante: panel
+   "Revision de supuestos" que el operador debe aprobar o corregir
+   antes de ver hipotesis generadas.
+
+3. Hito 1 corre post-eleccion, pre-pesquisa. Tiene dos salidas
+   separadas: veredicto correctivo (hard gate) y sugerencia
+   optimizadora (informativa). Los dos criterios no se mezclan.
+
+4. Ambos gates viven en fase IP. MP no valida hipotesis — MP valida
+   alineacion con marca y empaquetado editorial. La separacion
+   IP/MP se preserva intacta.
+
+5. Estado nuevo en pipelineStatus: hito_1. Se inserta entre
+   validacion (donde se eligen hipotesis) y pesquisa.
+
+6. La seccion "Herramientas de Produccion" del dashboard fue
+   eliminada (31A). Las herramientas vivas se invocan desde el
+   detalle de proyecto, no desde el dashboard.
+
+7. El producto editorial publicable y el registro forense interno
+   son artefactos estructuralmente distintos. Los prompts deben
+   producir producto editorial limpio, no bitacora forense. La
+   separacion se implementa en prompts (31F) y en export.
+
