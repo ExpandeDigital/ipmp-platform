@@ -61,6 +61,7 @@ const VALID_TOOLS: ToolName[] = [
   'generador_borrador_ip',
   'generador_prompt_visual',
   'gate_1a',
+  'hito_1',
 ];
 
 // ── Handler ──────────────────────────────────────────

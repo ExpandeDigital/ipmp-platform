@@ -100,6 +100,7 @@ export const projects = pgTable('projects', {
     enum: [
       'draft',
       'validacion',
+      'hito_1',
       'pesquisa',
       'produccion',
       'visual',

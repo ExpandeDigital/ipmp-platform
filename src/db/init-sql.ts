@@ -75,7 +75,8 @@ CREATE TABLE IF NOT EXISTS projects (
   brand_variant TEXT,
   title TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN (
-    'draft', 'validacion', 'pesquisa', 'produccion', 'visual', 'revision', 'aprobado', 'exportado'
+    'draft', 'validacion', 'hito_1', 'pesquisa', 'produccion',
+    'visual', 'revision', 'aprobado', 'exportado'
   )),
   thesis TEXT,
   classification TEXT NOT NULL,
@@ -208,4 +209,21 @@ CREATE INDEX IF NOT EXISTS idx_tenant_assets_activo ON tenant_assets(activo);
 -- =====================================================
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS editor_id UUID REFERENCES editores_agenda(id);
 CREATE INDEX IF NOT EXISTS idx_projects_editor ON projects(editor_id);
+
+-- =====================================================
+-- Chunk 31D: estado hito_1 en pipelineStatus
+-- =====================================================
+-- Agrega 'hito_1' al CHECK constraint de projects.status.
+-- Verificado en Railway (17 abril 2026): el nombre del constraint es
+-- 'projects_status_check' (convención estándar de Postgres sobre
+-- tablas creadas por el bloque CREATE TABLE de este mismo archivo).
+-- Patrón: DROP + ADD del mismo nombre con la lista actualizada.
+-- Idempotente: re-ejecutar tras un init previo regenera exactamente
+-- la misma constraint con los mismos valores permitidos.
+ALTER TABLE projects DROP CONSTRAINT IF EXISTS projects_status_check;
+ALTER TABLE projects ADD CONSTRAINT projects_status_check
+  CHECK (status IN (
+    'draft','validacion','hito_1','pesquisa','produccion',
+    'visual','revision','aprobado','exportado'
+  ));
 `;

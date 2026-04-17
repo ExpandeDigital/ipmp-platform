@@ -118,6 +118,7 @@ function evaluateExportGate(
 const PIPELINE_ORDER = [
   'draft',
   'validacion',
+  'hito_1',
   'pesquisa',
   'produccion',
   'revision',
@@ -129,7 +130,7 @@ const PIPELINE_ORDER = [
 type PipelineStatus = (typeof PIPELINE_ORDER)[number];
 
 // ── Fases InvestigaPress (sin marca) ─────────────────
-const IP_PHASES: PipelineStatus[] = ['draft', 'validacion', 'pesquisa'];
+const IP_PHASES: PipelineStatus[] = ['draft', 'validacion', 'hito_1', 'pesquisa'];
 
 // ── Helper: buscar project por UUID o publicId ───────
 async function findProject(idParam: string) {
@@ -431,6 +432,36 @@ export async function PATCH(
           }
         }
 
+        // ── Chunk 31D: no avanzar a hito_1 sin hipótesis elegida ──
+        if (nextStatus === 'hito_1') {
+          const currentData = (project.data as Record<string, unknown> | null) ?? {};
+          const hipotesisElegida = currentData.hipotesis_elegida;
+          if (!hipotesisElegida || typeof hipotesisElegida !== 'object') {
+            return NextResponse.json(
+              {
+                error: 'Debes elegir una hipotesis antes de avanzar al Hito 1. Vuelve al Generador de Hipotesis y selecciona una del listado.',
+                code: 'HIPOTESIS_ELEGIDA_REQUIRED',
+              },
+              { status: 400 }
+            );
+          }
+        }
+
+        // ── Chunk 31D: no avanzar a pesquisa sin aprobar el Hito 1 ──
+        if (nextStatus === 'pesquisa') {
+          const currentData = (project.data as Record<string, unknown> | null) ?? {};
+          const hito1 = currentData.hito_1 as Record<string, unknown> | undefined;
+          if (!hito1 || hito1.estado !== 'aprobado') {
+            return NextResponse.json(
+              {
+                error: 'Debes completar la validacion de hipotesis elegida (Hito 1) antes de abrir pesquisa. Ejecuta el Hito 1 y aprueba el veredicto correctivo.',
+                code: 'HITO_1_REQUIRED',
+              },
+              { status: 400 }
+            );
+          }
+        }
+
         // ── Chunk 18C: no avanzar a produccion sin borrador IP ──
         if (nextStatus === 'produccion') {
           const mergedDataForIP = ((updates.data ?? project.data) ?? {}) as Record<string, unknown>;
@@ -547,6 +578,48 @@ export async function PATCH(
         updates.data = {
           ...baseData,
           gate_1a: gate1aReseteado,
+        };
+      }
+    }
+
+    // ── Chunk 31D: auto-archivo del Hito 1 cuando cambia la hipótesis elegida ──
+    // Si el PATCH toca data.hipotesis_elegida (eleccion nueva o cambio a null
+    // via handleCambiarEleccion) y existe data.hito_1 con ultimoResultado,
+    // archivamos ultimoResultado en historial[] y reseteamos estado a
+    // 'pendiente'. Patrón atomico equivalente al auto-reset del gate_1a
+    // (Chunk 31C-2): es imposible que el Hito 1 quede aprobado contra una
+    // hipotesis que ya cambio.
+    const hipotesisCambio =
+      body.data &&
+      typeof body.data === 'object' &&
+      'hipotesis_elegida' in (body.data as Record<string, unknown>);
+
+    if (hipotesisCambio) {
+      const baseData =
+        (updates.data as Record<string, unknown> | undefined) ??
+        ((project.data as Record<string, unknown>) ?? {});
+      const hito1Actual = baseData.hito_1 as Record<string, unknown> | undefined;
+
+      if (hito1Actual) {
+        const historialPrevio = Array.isArray(hito1Actual.historial)
+          ? (hito1Actual.historial as Array<Record<string, unknown>>)
+          : [];
+        const ultimoResultado = hito1Actual.ultimoResultado as Record<string, unknown> | null | undefined;
+
+        const nuevoHistorial = ultimoResultado
+          ? [...historialPrevio, ultimoResultado]
+          : historialPrevio;
+
+        const hito1Reseteado = {
+          estado: 'pendiente',
+          ultimoResultado: null,
+          aprobadoEn: null,
+          historial: nuevoHistorial,
+        };
+
+        updates.data = {
+          ...baseData,
+          hito_1: hito1Reseteado,
         };
       }
     }
