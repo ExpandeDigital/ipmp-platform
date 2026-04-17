@@ -231,6 +231,11 @@ interface PatchBody {
   c4Acknowledged?: boolean;
   // Chunk 28: asignacion de editor al proyecto (null = desasignar)
   editorId?: string | null;
+  // Chunk 31C-2: edicion del enunciado en fase draft. Si cambian title
+  // o thesis y existe data.gate_1a, se archiva el ultimoResultado al
+  // historial y se resetea el estado del gate a 'pendiente' atomicamente.
+  title?: string;
+  thesis?: string | null;
 }
 
 export async function PATCH(
@@ -271,6 +276,61 @@ export async function PATCH(
           );
         }
         updates.editorId = editor.id;
+      }
+    }
+
+    // ── Chunk 31C-2: edicion de title / thesis con auto-reset del Gate 1a ──
+    // El enunciado del proyecto (title + thesis) se puede editar desde
+    // la fase draft (tipicamente tras correccion sugerida por el Gate 1a).
+    // Cuando cambia el enunciado y existe data.gate_1a, archivamos el
+    // ultimoResultado al historial y reseteamos el estado a 'pendiente'
+    // atomicamente, de modo que el hard gate GATE_1A_REQUIRED vuelva a
+    // bloquear el avance hasta re-ejecucion y re-aprobacion contra el
+    // enunciado nuevo.
+    //
+    // Solo permitimos editar title / thesis en fase draft. En fases
+    // posteriores el enunciado es inmutable (el borrador y las fuentes
+    // del expediente dependen de el).
+    let enunciadoCambio = false;
+    if (body.title !== undefined || body.thesis !== undefined) {
+      if (project.status !== 'draft') {
+        return NextResponse.json(
+          {
+            error: 'El titulo y la tesis solo se pueden editar en fase Borrador (draft). Retrocede el pipeline si necesitas corregir el enunciado.',
+            code: 'ENUNCIADO_INMUTABLE',
+          },
+          { status: 400 }
+        );
+      }
+
+      if (body.title !== undefined) {
+        const nuevoTitle = String(body.title).trim();
+        if (nuevoTitle.length === 0) {
+          return NextResponse.json(
+            { error: 'El titulo no puede quedar vacio.' },
+            { status: 400 }
+          );
+        }
+        if (nuevoTitle.length > 500) {
+          return NextResponse.json(
+            { error: 'El titulo supera el maximo de 500 caracteres.' },
+            { status: 400 }
+          );
+        }
+        if (nuevoTitle !== project.title) {
+          updates.title = nuevoTitle;
+          enunciadoCambio = true;
+        }
+      }
+
+      if (body.thesis !== undefined) {
+        const nuevaThesis = body.thesis === null ? null : String(body.thesis).trim();
+        const thesisActual = project.thesis ?? null;
+        const thesisNormalizada = nuevaThesis === '' ? null : nuevaThesis;
+        if (thesisNormalizada !== thesisActual) {
+          updates.thesis = thesisNormalizada;
+          enunciadoCambio = true;
+        }
       }
     }
 
@@ -454,6 +514,41 @@ export async function PATCH(
     if (body.data && typeof body.data === 'object') {
       const currentData = (project.data as Record<string, unknown>) ?? {};
       updates.data = { ...currentData, ...body.data };
+    }
+
+    // ── Chunk 31C-2: auto-archivo del Gate 1a cuando el enunciado cambio ──
+    // Si title o thesis cambiaron y existe data.gate_1a con ultimoResultado,
+    // archivamos el ultimoResultado al historial y reseteamos el estado a
+    // 'pendiente'. Esto es atomico: al mismo PATCH que cambia el enunciado
+    // le corresponde la invalidacion del veredicto previo.
+    if (enunciadoCambio) {
+      const baseData =
+        (updates.data as Record<string, unknown> | undefined) ??
+        ((project.data as Record<string, unknown>) ?? {});
+      const gate1aActual = baseData.gate_1a as Record<string, unknown> | undefined;
+
+      if (gate1aActual) {
+        const historialPrevio = Array.isArray(gate1aActual.historial)
+          ? (gate1aActual.historial as Array<Record<string, unknown>>)
+          : [];
+        const ultimoResultado = gate1aActual.ultimoResultado as Record<string, unknown> | null | undefined;
+
+        const nuevoHistorial = ultimoResultado
+          ? [...historialPrevio, ultimoResultado]
+          : historialPrevio;
+
+        const gate1aReseteado = {
+          estado: 'pendiente',
+          ultimoResultado: null,
+          aprobadoEn: null,
+          historial: nuevoHistorial,
+        };
+
+        updates.data = {
+          ...baseData,
+          gate_1a: gate1aReseteado,
+        };
+      }
     }
 
     // ── Auto-promoción VHP → ODF (transición validacion → pesquisa) ──

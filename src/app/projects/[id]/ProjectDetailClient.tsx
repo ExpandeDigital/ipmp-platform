@@ -265,6 +265,39 @@ interface BorradorData {
   desactualizado?: boolean;
 }
 
+// Chunk 31C-2: Gate 1a — Sanity check de supuestos factuales (fase draft)
+type Gate1aVeredicto = 'confirmado' | 'dudoso' | 'falso';
+type Gate1aCategoria = 'nombre_propio' | 'denominacion_oficial' | 'fecha' | 'existencia_entidad';
+type Gate1aEstado = 'pendiente' | 'en_revision' | 'aprobado';
+type Gate1aVeredictoGlobal = 'sano' | 'requiere_correccion';
+
+interface Gate1aSupuesto {
+  id: string;
+  enunciado: string;
+  categoria: Gate1aCategoria;
+  veredicto: Gate1aVeredicto;
+  justificacion: string;
+  correccion_sugerida: string;
+}
+
+interface Gate1aResultado {
+  supuestos: Gate1aSupuesto[];
+  veredicto_global: Gate1aVeredictoGlobal;
+  resumen: string;
+  ejecutadoEn: string;
+  enunciado_evaluado: {
+    title: string;
+    thesis: string | null;
+  };
+}
+
+interface Gate1aData {
+  estado: Gate1aEstado;
+  ultimoResultado: Gate1aResultado | null;
+  aprobadoEn: string | null;
+  historial: Gate1aResultado[];
+}
+
 // Chunk 20A: imagen visual generada externamente
 interface ImagenVisualData {
   url: string;
@@ -301,7 +334,7 @@ interface TemplateOption {
   reviewLevel: string;
 }
 
-type ActiveTool = 'hipotesis' | 'vhp' | 'odf' | 'pitch' | 'radar' | 'validador' | 'validador_ip' | 'borrador' | 'borrador_ip' | 'exportador' | 'prompt_visual' | 'vista_previa';
+type ActiveTool = 'gate_1a' | 'hipotesis' | 'vhp' | 'odf' | 'pitch' | 'radar' | 'validador' | 'validador_ip' | 'borrador' | 'borrador_ip' | 'exportador' | 'prompt_visual' | 'vista_previa';
 
 interface PhaseConfig {
   tabs: { key: ActiveTool; label: string; subtitle?: string }[];
@@ -387,6 +420,33 @@ const FUENTE_CONFIANZA_COLORS: Record<string, string> = {
   alta: 'bg-green-500/20 text-green-400 border-green-500/40',
 };
 
+// Chunk 31C-2: labels y colores del Gate 1a
+const GATE_1A_CATEGORIA_LABELS: Record<Gate1aCategoria, string> = {
+  nombre_propio: 'Nombre propio',
+  denominacion_oficial: 'Denominación oficial',
+  fecha: 'Fecha',
+  existencia_entidad: 'Existencia de entidad',
+};
+
+const GATE_1A_VEREDICTO_LABELS: Record<Gate1aVeredicto, { label: string; color: string }> = {
+  confirmado: { label: 'Confirmado', color: 'bg-green-100 text-green-800 border-green-300' },
+  dudoso: { label: 'Dudoso', color: 'bg-yellow-100 text-yellow-800 border-yellow-300' },
+  falso: { label: 'Falso', color: 'bg-red-100 text-red-800 border-red-300' },
+};
+
+const GATE_1A_GLOBAL_LABELS: Record<Gate1aVeredictoGlobal, { label: string; color: string; descripcion: string }> = {
+  sano: {
+    label: 'Enunciado sano',
+    color: 'bg-green-50 text-green-900 border-green-300',
+    descripcion: 'No se detectaron supuestos factuales problemáticos. Puedes aprobar la revisión y avanzar a Validación.',
+  },
+  requiere_correccion: {
+    label: 'Requiere corrección',
+    color: 'bg-yellow-50 text-yellow-900 border-yellow-300',
+    descripcion: 'Se detectaron supuestos dudosos o falsos. Revisa los hallazgos, corrige el enunciado si corresponde, y re-ejecuta la revisión. Si aun así decides aprobar, el veredicto queda registrado para trazabilidad editorial.',
+  },
+};
+
 // Validador de Hipótesis y Pista (Chunk 7B)
 const LEAD_TIPO_LABELS: Record<LeadTipo, string> = {
   persona: '👤 Persona',
@@ -446,8 +506,10 @@ const FAMILY_LABELS: Record<string, string> = {
 
 const PHASE_CONFIG: Record<string, PhaseConfig> = {
   draft: {
-    tabs: [],
-    info: 'Borrador recién creado. Avanza a Validación para generar hipótesis de investigación.',
+    tabs: [
+      { key: 'gate_1a', label: '🛡️ Revisión de supuestos', subtitle: 'Audita los supuestos factuales del enunciado antes de generar hipótesis' },
+    ],
+    info: 'Antes de generar hipótesis, ejecuta la Revisión de supuestos factuales. Este paso verifica que nombres propios, denominaciones oficiales, fechas y entidades referidas en el título y la tesis sean correctos.',
   },
   validacion: {
     tabs: [
@@ -906,7 +968,17 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
   const [odfUploadError, setOdfUploadError] = useState<string | null>(null);
 
   // Active tool (default se reajusta por useEffect según fase)
-  const [activeTool, setActiveTool] = useState<ActiveTool>('hipotesis');
+  const [activeTool, setActiveTool] = useState<ActiveTool>('gate_1a');
+
+  // Chunk 31C-2: Gate 1a — estados locales
+  const [gate1aLoading, setGate1aLoading] = useState(false);
+  const [gate1aError, setGate1aError] = useState<string | null>(null);
+  const [gate1aAprobando, setGate1aAprobando] = useState(false);
+  const [gate1aEditandoEnunciado, setGate1aEditandoEnunciado] = useState(false);
+  const [gate1aEditTitle, setGate1aEditTitle] = useState('');
+  const [gate1aEditThesis, setGate1aEditThesis] = useState('');
+  const [gate1aGuardandoEnunciado, setGate1aGuardandoEnunciado] = useState(false);
+  const [gate1aVerHistorial, setGate1aVerHistorial] = useState(false);
 
   // Generador de Borrador — Chunk 8
   const [borradorOperadorNotas, setBorradorOperadorNotas] = useState('');
@@ -1148,6 +1220,15 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
           alert(json.error);
           return;
         }
+        if (json.code === 'GATE_1A_REQUIRED') {
+          alert(json.error);
+          setActiveTool('gate_1a');
+          return;
+        }
+        if (json.code === 'ENUNCIADO_INMUTABLE') {
+          alert(json.error);
+          return;
+        }
         throw new Error(json.error);
       }
       setC4Ack(false);
@@ -1245,6 +1326,168 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
       setHipError(err instanceof Error ? err.message : 'Error desconocido');
     } finally {
       setGenerandoHip(false);
+    }
+  }
+
+  // ── Chunk 31C-2: Gate 1a — ejecutar llamada IA ──
+  async function handleEjecutarGate1a() {
+    if (!project || gate1aLoading) return;
+    setGate1aLoading(true);
+    setGate1aError(null);
+
+    try {
+      const userMessage = `TITULO: ${project.title}${project.thesis ? `\nTESIS: ${project.thesis}` : ''}`;
+
+      const genRes = await fetch('/api/ai/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tool: 'gate_1a',
+          userMessage,
+          projectId: project.id,
+        }),
+      });
+      const genJson = await genRes.json();
+      if (!genRes.ok) throw new Error(genJson.error || 'Error ejecutando Gate 1a');
+      if (genJson.parseError) throw new Error('El modelo devolvio un formato invalido. Reintenta.');
+
+      const result = genJson.result ?? {};
+      const nuevoResultado: Gate1aResultado = {
+        supuestos: Array.isArray(result.supuestos) ? result.supuestos : [],
+        veredicto_global: result.veredicto_global === 'sano' ? 'sano' : 'requiere_correccion',
+        resumen: typeof result.resumen === 'string' ? result.resumen : '',
+        ejecutadoEn: new Date().toISOString(),
+        enunciado_evaluado: {
+          title: project.title,
+          thesis: project.thesis ?? null,
+        },
+      };
+
+      // Archivar resultado previo al historial si existe
+      const currentGate1a = (project.data?.gate_1a as Gate1aData | undefined) ?? null;
+      const historialPrevio = currentGate1a?.historial ?? [];
+      const historialActualizado = currentGate1a?.ultimoResultado
+        ? [...historialPrevio, currentGate1a.ultimoResultado]
+        : historialPrevio;
+
+      const gate1aPayload: Gate1aData = {
+        estado: 'en_revision',
+        ultimoResultado: nuevoResultado,
+        aprobadoEn: null,
+        historial: historialActualizado,
+      };
+
+      const patchRes = await fetch(`/api/projects/${project.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: { gate_1a: gate1aPayload } }),
+      });
+      if (!patchRes.ok) {
+        const pj = await patchRes.json();
+        throw new Error(pj.error || 'Error guardando resultado del Gate 1a');
+      }
+
+      await fetchProject();
+    } catch (err) {
+      setGate1aError(err instanceof Error ? err.message : 'Error desconocido');
+    } finally {
+      setGate1aLoading(false);
+    }
+  }
+
+  // ── Chunk 31C-2: Gate 1a — aprobar revision ──
+  async function handleAprobarGate1a() {
+    if (!project || gate1aAprobando) return;
+    const currentGate1a = project.data?.gate_1a as Gate1aData | undefined;
+    if (!currentGate1a?.ultimoResultado) {
+      alert('No hay resultado de Gate 1a para aprobar. Ejecuta la revision primero.');
+      return;
+    }
+
+    if (currentGate1a.ultimoResultado.veredicto_global === 'requiere_correccion') {
+      const ok = confirm(
+        'El veredicto actual es "requiere correccion". Si apruebas igual, queda registrado que decidiste asumir el riesgo editorial. ¿Aprobar la revision de todos modos?'
+      );
+      if (!ok) return;
+    }
+
+    setGate1aAprobando(true);
+    try {
+      const aprobado: Gate1aData = {
+        ...currentGate1a,
+        estado: 'aprobado',
+        aprobadoEn: new Date().toISOString(),
+      };
+      const res = await fetch(`/api/projects/${project.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: { gate_1a: aprobado } }),
+      });
+      if (!res.ok) {
+        const pj = await res.json();
+        throw new Error(pj.error || 'Error aprobando la revision');
+      }
+      await fetchProject();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Error desconocido');
+    } finally {
+      setGate1aAprobando(false);
+    }
+  }
+
+  // ── Chunk 31C-2: Gate 1a — abrir/cerrar edicion de enunciado ──
+  function handleAbrirEdicionEnunciado() {
+    if (!project) return;
+    setGate1aEditTitle(project.title);
+    setGate1aEditThesis(project.thesis ?? '');
+    setGate1aEditandoEnunciado(true);
+  }
+
+  function handleCancelarEdicionEnunciado() {
+    setGate1aEditandoEnunciado(false);
+    setGate1aEditTitle('');
+    setGate1aEditThesis('');
+  }
+
+  // ── Chunk 31C-2: Gate 1a — guardar enunciado editado ──
+  // El backend auto-archiva el ultimoResultado del gate y resetea
+  // estado a 'pendiente' cuando title o thesis cambian.
+  async function handleGuardarEnunciado() {
+    if (!project || gate1aGuardandoEnunciado) return;
+    const nuevoTitle = gate1aEditTitle.trim();
+    const nuevaThesis = gate1aEditThesis.trim();
+    if (nuevoTitle.length === 0) {
+      alert('El titulo no puede quedar vacio.');
+      return;
+    }
+    if (nuevoTitle === project.title && nuevaThesis === (project.thesis ?? '')) {
+      setGate1aEditandoEnunciado(false);
+      return;
+    }
+
+    setGate1aGuardandoEnunciado(true);
+    try {
+      const body: Record<string, unknown> = {};
+      if (nuevoTitle !== project.title) body.title = nuevoTitle;
+      if (nuevaThesis !== (project.thesis ?? '')) body.thesis = nuevaThesis.length > 0 ? nuevaThesis : null;
+
+      const res = await fetch(`/api/projects/${project.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const pj = await res.json();
+        throw new Error(pj.error || 'Error guardando el enunciado');
+      }
+      setGate1aEditandoEnunciado(false);
+      setGate1aEditTitle('');
+      setGate1aEditThesis('');
+      await fetchProject();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Error desconocido');
+    } finally {
+      setGate1aGuardandoEnunciado(false);
     }
   }
 
@@ -3414,6 +3657,226 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
               <div className="text-center py-10">
                 <div className="text-5xl mb-3">📝</div>
                 <p className="text-davy-gray">{phaseConfig.info}</p>
+              </div>
+            )}
+
+            {activeTool === 'gate_1a' && phaseConfig.tabs.some((t) => t.key === 'gate_1a') && (
+              <div className="space-y-4">
+                {(() => {
+                  const gate1a = (project.data?.gate_1a as Gate1aData | undefined) ?? null;
+                  const tieneResultado = !!gate1a?.ultimoResultado;
+                  const estado = gate1a?.estado ?? 'pendiente';
+                  const resultado = gate1a?.ultimoResultado ?? null;
+                  const globalConfig = resultado
+                    ? GATE_1A_GLOBAL_LABELS[resultado.veredicto_global]
+                    : null;
+
+                  return (
+                    <>
+                      {/* Introduccion explicativa */}
+                      {!tieneResultado && (
+                        <div className="bg-blue-50 border border-blue-200 rounded p-4">
+                          <h3 className="font-semibold text-blue-900 mb-2">¿Qué hace la Revisión de supuestos?</h3>
+                          <p className="text-sm text-blue-900">
+                            Antes de generar hipótesis, este paso audita los supuestos factuales concretos que contiene el título y la tesis del proyecto: nombres propios, denominaciones oficiales, fechas y entidades mencionadas. El objetivo es detectar si la pregunta parte de información incorrecta, para no construir pesquisa sobre un supuesto falso.
+                          </p>
+                          <p className="text-sm text-blue-900 mt-2">
+                            No evalúa calidad periodística ni relevancia editorial. Esa evaluación viene después.
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Estado actual del gate */}
+                      {estado === 'aprobado' && (
+                        <div className="bg-green-50 border border-green-300 rounded p-3 flex items-center gap-3">
+                          <span className="text-green-700 text-2xl">✓</span>
+                          <div>
+                            <div className="font-semibold text-green-900">Revisión aprobada</div>
+                            <div className="text-xs text-green-800">
+                              {gate1a?.aprobadoEn ? `Aprobada el ${new Date(gate1a.aprobadoEn).toLocaleString('es-CL')}` : ''}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Enunciado actual */}
+                      <div className="bg-white border border-gray-200 rounded p-4">
+                        <div className="flex justify-between items-start mb-2">
+                          <h3 className="font-semibold text-gray-900">Enunciado del proyecto</h3>
+                          {!gate1aEditandoEnunciado && (
+                            <button
+                              onClick={handleAbrirEdicionEnunciado}
+                              className="text-sm text-blue-600 hover:text-blue-800 underline"
+                            >
+                              Editar enunciado
+                            </button>
+                          )}
+                        </div>
+
+                        {!gate1aEditandoEnunciado ? (
+                          <>
+                            <div className="text-sm text-gray-500 mb-1">Título</div>
+                            <div className="text-gray-900 mb-3">{project.title}</div>
+                            <div className="text-sm text-gray-500 mb-1">Tesis</div>
+                            <div className="text-gray-900">
+                              {project.thesis || <span className="text-gray-400 italic">Sin tesis definida</span>}
+                            </div>
+                          </>
+                        ) : (
+                          <div className="space-y-3">
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">Título</label>
+                              <input
+                                type="text"
+                                value={gate1aEditTitle}
+                                onChange={(e) => setGate1aEditTitle(e.target.value)}
+                                className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                                maxLength={500}
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">Tesis (opcional)</label>
+                              <textarea
+                                value={gate1aEditThesis}
+                                onChange={(e) => setGate1aEditThesis(e.target.value)}
+                                rows={4}
+                                className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                              />
+                            </div>
+                            <div className="bg-yellow-50 border border-yellow-200 rounded p-2 text-xs text-yellow-900">
+                              Al guardar cambios, el resultado actual del Gate 1a se archiva en el historial y el estado vuelve a &ldquo;pendiente&rdquo;. Tendrás que re-ejecutar la revisión con el enunciado corregido.
+                            </div>
+                            <div className="flex gap-2">
+                              <button
+                                onClick={handleGuardarEnunciado}
+                                disabled={gate1aGuardandoEnunciado}
+                                className="bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700 disabled:bg-gray-400"
+                              >
+                                {gate1aGuardandoEnunciado ? 'Guardando...' : 'Guardar enunciado'}
+                              </button>
+                              <button
+                                onClick={handleCancelarEdicionEnunciado}
+                                disabled={gate1aGuardandoEnunciado}
+                                className="bg-gray-200 text-gray-800 px-4 py-2 rounded text-sm hover:bg-gray-300"
+                              >
+                                Cancelar
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Boton de ejecutar / re-ejecutar */}
+                      {!gate1aEditandoEnunciado && (
+                        <div className="flex gap-2 flex-wrap">
+                          <button
+                            onClick={handleEjecutarGate1a}
+                            disabled={gate1aLoading}
+                            className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:bg-gray-400"
+                          >
+                            {gate1aLoading
+                              ? 'Ejecutando revisión...'
+                              : tieneResultado
+                                ? 'Re-ejecutar revisión'
+                                : 'Ejecutar Revisión de supuestos'}
+                          </button>
+                          {tieneResultado && estado !== 'aprobado' && (
+                            <button
+                              onClick={handleAprobarGate1a}
+                              disabled={gate1aAprobando}
+                              className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 disabled:bg-gray-400"
+                            >
+                              {gate1aAprobando ? 'Aprobando...' : 'Aprobar revisión'}
+                            </button>
+                          )}
+                        </div>
+                      )}
+
+                      {gate1aError && (
+                        <div className="bg-red-50 border border-red-300 rounded p-3 text-sm text-red-800">
+                          {gate1aError}
+                        </div>
+                      )}
+
+                      {/* Resultado de la ultima ejecucion */}
+                      {tieneResultado && resultado && globalConfig && (
+                        <div className="bg-white border border-gray-200 rounded p-4 space-y-4">
+                          <div className={`border rounded p-3 ${globalConfig.color}`}>
+                            <div className="font-semibold mb-1">{globalConfig.label}</div>
+                            <div className="text-sm mb-2">{resultado.resumen}</div>
+                            <div className="text-xs opacity-80">{globalConfig.descripcion}</div>
+                          </div>
+
+                          <div className="text-xs text-gray-500">
+                            Ejecutada el {new Date(resultado.ejecutadoEn).toLocaleString('es-CL')}
+                          </div>
+
+                          {resultado.supuestos.length === 0 ? (
+                            <div className="text-sm text-gray-600 italic">
+                              El modelo no identificó supuestos factuales concretos para auditar. Esto puede significar que el enunciado es abstracto, muy general, o no contiene afirmaciones factuales verificables. Considera si el enunciado necesita más especificidad antes de avanzar a Validación.
+                            </div>
+                          ) : (
+                            <div className="space-y-3">
+                              <h4 className="font-semibold text-gray-900">
+                                Supuestos detectados ({resultado.supuestos.length})
+                              </h4>
+                              {resultado.supuestos.map((s) => {
+                                const veredictoConfig = GATE_1A_VEREDICTO_LABELS[s.veredicto];
+                                return (
+                                  <div key={s.id} className="border border-gray-200 rounded p-3">
+                                    <div className="flex justify-between items-start gap-2 mb-2 flex-wrap">
+                                      <div className="text-xs text-gray-500 uppercase tracking-wide">
+                                        {GATE_1A_CATEGORIA_LABELS[s.categoria]}
+                                      </div>
+                                      <span className={`text-xs px-2 py-1 rounded border ${veredictoConfig.color}`}>
+                                        {veredictoConfig.label}
+                                      </span>
+                                    </div>
+                                    <div className="text-gray-900 font-medium mb-2">&ldquo;{s.enunciado}&rdquo;</div>
+                                    <div className="text-sm text-gray-700 mb-2">{s.justificacion}</div>
+                                    {s.veredicto === 'falso' && s.correccion_sugerida && (
+                                      <div className="bg-amber-50 border border-amber-200 rounded p-2 text-sm">
+                                        <span className="font-medium text-amber-900">Corrección sugerida: </span>
+                                        <span className="text-amber-900">{s.correccion_sugerida}</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Historial de revisiones previas */}
+                      {gate1a?.historial && gate1a.historial.length > 0 && (
+                        <div className="bg-white border border-gray-200 rounded p-4">
+                          <button
+                            onClick={() => setGate1aVerHistorial((v) => !v)}
+                            className="text-sm text-blue-600 hover:text-blue-800 underline"
+                          >
+                            {gate1aVerHistorial ? 'Ocultar' : 'Ver'} historial de revisiones ({gate1a.historial.length})
+                          </button>
+                          {gate1aVerHistorial && (
+                            <div className="mt-3 space-y-2">
+                              {gate1a.historial.map((h, idx) => (
+                                <div key={idx} className="text-xs border-l-2 border-gray-300 pl-3">
+                                  <div className="text-gray-500">
+                                    {new Date(h.ejecutadoEn).toLocaleString('es-CL')} — {GATE_1A_GLOBAL_LABELS[h.veredicto_global].label}
+                                  </div>
+                                  <div className="text-gray-700 mt-1">{h.resumen}</div>
+                                  <div className="text-gray-500 mt-1 italic">
+                                    Enunciado evaluado: &ldquo;{h.enunciado_evaluado.title}&rdquo;
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
             )}
 
