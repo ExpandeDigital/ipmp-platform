@@ -351,6 +351,26 @@ export async function PATCH(
 
         const nextStatus = PIPELINE_ORDER[currentIndex + 1];
 
+        // ── Chunk 31C-1: Gate 1a — no avanzar a validacion sin supuestos factuales aprobados ──
+        // El operador debe haber ejecutado la Revision de supuestos en
+        // fase draft y aprobado el veredicto antes de poder generar
+        // hipotesis. Motivado por el hallazgo A del Chunk 31: sin gate
+        // de auditoria pre-pesquisa, un enunciado con supuestos
+        // factuales erroneos contamina todo el pipeline aguas abajo.
+        if (nextStatus === 'validacion') {
+          const currentData = (project.data as Record<string, unknown> | null) ?? {};
+          const gate1a = currentData.gate_1a as Record<string, unknown> | undefined;
+          if (!gate1a || gate1a.estado !== 'aprobado') {
+            return NextResponse.json(
+              {
+                error: 'Debes completar la Revision de supuestos factuales antes de generar hipotesis. Ejecuta el Gate 1a en la fase Borrador y aprueba el veredicto.',
+                code: 'GATE_1A_REQUIRED',
+              },
+              { status: 400 }
+            );
+          }
+        }
+
         // ── Chunk 18C: no avanzar a produccion sin borrador IP ──
         if (nextStatus === 'produccion') {
           const mergedDataForIP = ((updates.data ?? project.data) ?? {}) as Record<string, unknown>;
