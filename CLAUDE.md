@@ -1877,6 +1877,83 @@ de codigo pero si completo el reconocimiento, documentar el
 reconocimiento explicitamente preserva el valor para la sesion
 proxima.
 
+## Hallazgos de validacion — Chunk 31C-1 (17 abril 2026)
+
+Validacion end-to-end del backend del Gate 1a en produccion
+(commit caccbb1), ejecutada via curl contra un proyecto real en
+fase draft (IP-2026-0004, "Seremis fugases en el gobierno de Kast").
+No se ejecuto el Test 3 de unlock happy path para no mutar un
+proyecto con editor asignado y trabajo en curso; se valida
+asimetricamente el predicate negativo (Test 1) con la garantia
+booleana de que el positivo es su complemento simetrico.
+
+### a) Hard gate GATE_1A_REQUIRED opera correctamente
+
+Test 1: PATCH /api/projects/IP-2026-0004 con body { action: 'advance' }
+contra proyecto en fase draft sin data.gate_1a. Respuesta HTTP 400
+con body que incluye `"code":"GATE_1A_REQUIRED"` y mensaje en
+espanol neutro apuntando al operador a ejecutar el Gate 1a. Deploy
+Vercel operativo, bloqueo efectivo en produccion.
+
+### b) Endpoint IA /api/ai/generate con tool 'gate_1a' devuelve JSON estructurado limpio
+
+Test 2: POST /api/ai/generate con tool: 'gate_1a' y userMessage
+`"TITULO: Investigar el Hospital Arica 100\nTESIS: El proyecto
+hospitalario conocido como Hospital Arica 100 presenta demoras
+significativas."` (replicando el enunciado del Hallazgo A del
+Chunk 31). Respuesta HTTP 200 con result estructurado:
+- 2 supuestos detectados, ambos con veredicto 'dudoso'.
+- veredicto_global: 'requiere_correccion' (regla "dos o mas dudosos
+  elevan el veredicto" aplicada correctamente).
+- parseError: null (JSON bien formado, sin fallbacks del parser de
+  tres pasos).
+- Usage: 1776 tokens input / 305 output, duracion 5.7s (consistente
+  con otras tools IP).
+
+El modelo aplico correctamente la disciplina anti-fabricacion: no
+afirmo certezas sobre "Hospital Arica 100", flaggo como dudoso con
+justificacion explicita de incertidumbre sobre la denominacion y
+existencia de la entidad. Comportamiento deseado por diseno del
+prompt.
+
+### c) Registry y validacion de tool funcionan correctamente
+
+Implicito en Test 2: 'gate_1a' fue aceptado por VALID_TOOLS,
+routeado a IP_PROMPT_BUILDERS (no se paso tenantSlug ni
+templateSlug), buildGate1aPrompt() ejecutado, trackUsage() logueo
+consumo contra el tenant 'investigapress'. Sin errores 400/404/500.
+
+## Hallazgos de validacion — Chunk 31C-2 (pendiente)
+
+[PENDIENTE VALIDACION VISUAL]
+
+La validacion visual del frontend (commit 7a21f00) queda pendiente
+de ejercicio por el operador. Las pruebas sugeridas para cuando se
+ejecute, en orden de prioridad:
+
+1. Happy path: proyecto nuevo con enunciado auditable -> tab Gate 1a
+   default activa -> ejecutar -> ver supuestos tipificados -> aprobar
+   (con confirm de riesgo si aplica) -> badge verde -> avanzar pipeline
+   -> tab desaparece, aparece Generador de Hipotesis.
+
+2. Path de correccion (valida el auto-reset U1): proyecto con Gate 1a
+   aprobado -> editar enunciado inline -> guardar -> verificar que el
+   badge de aprobacion desaparece, estado vuelve a 'pendiente', historial
+   archiva la ejecucion previa, boton vuelve a "Ejecutar" (no
+   "Re-ejecutar").
+
+3. Path de bloqueo duro desde UI: proyecto nuevo sin ejecutar Gate ->
+   click Avanzar -> alert GATE_1A_REQUIRED -> tab gate_1a queda
+   seleccionada automaticamente.
+
+4. Path de inmutabilidad en fases posteriores: proyecto en validacion
+   o posterior -> intento de edicion de enunciado (si hay UI para ello
+   en otro lugar) falla con ENUNCIADO_INMUTABLE.
+
+Esta seccion se completa con los resultados concretos cuando el
+operador ejerza la validacion visual. No se marca el Chunk 31C como
+"totalmente validado" hasta entonces.
+
 ### Chunk 31 — Disciplina editorial del pipeline IP: del Hito 1 al producto limpio [EN CURSO abril 2026]
 
 - **31A** `e631a2c` chore(chunk31a): eliminar seccion Herramientas de
@@ -1890,6 +1967,77 @@ proxima.
   arquitectonico. Registra las decisiones de diseno del Chunk 31
   completo, incluyendo la reestructuracion del pipeline con Gate 1a
   y Hito 1. Sin codigo. Este bloque cumple la funcion del 31B.
+
+- **31C-1** `caccbb1` feat(chunk31c-1): Gate 1a backend — prompt,
+  tool registry y hard gate GATE_1A_REQUIRED. Tres archivos tocados.
+  (a) src/lib/ai/prompts.ts: nuevo builder buildGate1aPrompt() en
+  IP_PROMPT_BUILDERS con wrapper neutro en MP_PROMPT_BUILDERS (patron
+  de validador_tono_ip y generador_borrador_ip). Extension del union
+  ToolName con 'gate_1a'. El prompt audita supuestos factuales en
+  cuatro categorias (nombre_propio, denominacion_oficial, fecha,
+  existencia_entidad) con regla anti-fabricacion explicita: reserva
+  "confirmado" solo con certeza alta, reserva "falso" solo con
+  certeza alta de error, default a "dudoso". Regla del veredicto
+  global: dos o mas supuestos "dudoso" elevan el veredicto a
+  "requiere_correccion". (b) src/app/api/ai/generate/route.ts:
+  'gate_1a' agregado al array VALID_TOOLS. No se agrega a
+  MP_ONLY_TOOLS porque el Gate 1a funciona tanto en modo IP como
+  con tenant (el wrapper MP ignora el contexto). (c) src/app/api/
+  projects/[id]/route.ts: nuevo hard gate insertado antes de
+  BORRADOR_IP_REQUIRED en la transicion draft -> validacion.
+  Devuelve { error, code: 'GATE_1A_REQUIRED', status: 400 } cuando
+  data.gate_1a.estado !== 'aprobado'. Simetrico con TRASPASO_REQUIRED,
+  BORRADOR_IP_REQUIRED, EXPORT_GATE_FAILED, C4_ACK_REQUIRED.
+  Validado end-to-end en produccion con curls contra proyecto real
+  en fase draft (Tests 1 y 2).
+
+- **31C-2** `7a21f00` feat(chunk31c-2): Gate 1a frontend con edicion
+  de enunciado y auto-reset backend atomico. Dos archivos tocados.
+  (a) src/app/api/projects/[id]/route.ts: PatchBody extendido con
+  title?: string y thesis?: string | null. Bloque de edicion
+  insertado tras el bloque de asignacion de editor (Chunk 28):
+  la edicion solo se permite en fase draft, devuelve
+  { code: 'ENUNCIADO_INMUTABLE', status: 400 } en fases posteriores.
+  Validaciones de forma: title no puede ser vacio ni superar 500
+  caracteres, thesis vacio se normaliza a null. Bloque de auto-reset
+  atomico del gate_1a insertado inmediatamente despues del merge de
+  data: si title o thesis cambiaron y existe data.gate_1a, archiva
+  ultimoResultado en historial[], resetea estado a 'pendiente' y
+  limpia aprobadoEn. Operacion atomica en el mismo PATCH: es
+  imposible que el enunciado cambie sin que el gate se invalide.
+  (b) src/app/projects/[id]/ProjectDetailClient.tsx: interfaces
+  Gate1aSupuesto / Gate1aResultado / Gate1aData y types auxiliares.
+  Extension del union ActiveTool con 'gate_1a' como primer elemento
+  y default de useState a 'gate_1a'. Tab nuevo en
+  PHASE_CONFIG.draft (la fase dejo de estar vacia). Constantes
+  GATE_1A_CATEGORIA_LABELS, GATE_1A_VEREDICTO_LABELS y
+  GATE_1A_GLOBAL_LABELS para rendering. Ocho estados React locales
+  (loading, error, aprobando, editandoEnunciado, editTitle,
+  editThesis, guardandoEnunciado, verHistorial). Cuatro handlers:
+  handleEjecutarGate1a (llamada IA + persistencia de ultimoResultado
+  con archivado client-side del resultado previo si existe);
+  handleAprobarGate1a (PATCH con estado 'aprobado' y aprobadoEn;
+  confirm de asuncion de riesgo si veredicto_global es
+  'requiere_correccion'); handleAbrirEdicionEnunciado /
+  handleCancelarEdicionEnunciado (toggle del form inline);
+  handleGuardarEnunciado (PATCH con title/thesis, el backend se
+  encarga del auto-reset). Manejo de GATE_1A_REQUIRED y
+  ENUNCIADO_INMUTABLE en el if-chain de handlePipelineAction; el
+  primero ademas fuerza setActiveTool('gate_1a') para empujar al
+  operador a la tab correspondiente. Tab render completo:
+  introduccion explicativa cuando no hay resultado, badge verde de
+  aprobacion, panel de enunciado con edicion inline, botones
+  contextuales (Ejecutar / Re-ejecutar / Aprobar), veredicto global
+  con color y descripcion, lista de supuestos tipificados por
+  categoria con chip de veredicto, correccion sugerida en caso de
+  veredicto falso, historial colapsable de revisiones previas.
+  +562 / -4 lineas netas. Validacion visual pendiente.
+
+- **31C-3** [DOCUMENTAL] Cierre del Chunk 31C. Registra SHAs
+  (e631a2c, caccbb1, 7a21f00), decisiones arquitectonicas U1/U2/U3,
+  patron de auto-reset atomico como patron reutilizable, y
+  contratos nuevos del backend. Este bloque cumple la funcion
+  del 31C-3.
 
 #### Mapa canonico del pipeline InvestigaPress — estado actual y reestructuracion
 
@@ -2134,4 +2282,127 @@ pipeline.
    son artefactos estructuralmente distintos. Los prompts deben
    producir producto editorial limpio, no bitacora forense. La
    separacion se implementa en prompts (31F) y en export.
+
+#### Decisiones arquitectonicas cerradas durante la implementacion del Chunk 31C
+
+Durante la sesion de implementacion del 31C (entre el mapa canonico
+del 31B y los commits del 31C-1 y 31C-2), se cerraron tres decisiones
+arquitectonicas que no estaban fijadas en el 31B. Se documentan aqui
+como referencia para futuros chunks y para lectores que auditen el
+codigo sin el historial de la sesion.
+
+**U1 — Deteccion de enunciado desactualizado respecto al gate.**
+Resuelta a nivel backend, no UI. Cuando el operador edita title o
+thesis via PATCH /api/projects/[id], el backend auto-archiva el
+ultimoResultado del gate_1a en historial[] y resetea estado a
+'pendiente' atomicamente en el mismo PATCH. Alternativa considerada:
+badge cliente "enunciado desactualizado" comparando
+project.title vs gate_1a.ultimoResultado.enunciado_evaluado.title.
+La alternativa fue descartada porque genera el estado intermedio
+"gate aprobado pero enunciado cambio" que es ambiguo para el operador
+y requiere logica de render condicional. La solucion backend garantiza
+que ese estado intermedio no puede existir: al momento de cualquier
+cambio de enunciado, el gate pierde la aprobacion. Es imposible
+avanzar con enunciado divergente del evaluado.
+
+Patron equivalente al auto-reset de data.borrador.desactualizado del
+Chunk 12C, pero ejecutado en backend (atomico dentro del mismo PATCH)
+en vez de en cliente (comparacion en tiempo de render).
+
+**U2 — Edicion inline del enunciado vs redireccion a form externo.**
+Resuelta a favor de edicion inline dentro del panel del Gate 1a.
+Alternativa considerada: link "Editar enunciado" que navega al form
+existente de edicion del proyecto. La alternativa fue descartada
+porque (a) requeria confirmar la existencia de tal form (no estaba
+mapeado), (b) introducia context-switch que rompia el flujo del
+operador cuando tenia la correccion_sugerida del modelo a la vista,
+(c) exigiria un camino de regreso que mantenga el contexto del gate.
+La edicion inline resuelve las tres: el operador nunca sale del panel,
+tiene la correccion sugerida a la vista mientras edita, y un banner
+amarillo explicito le avisa que guardar va a invalidar el gate.
+
+**U3 — Estado del soft gate de Chunk 9C (advance validacion ->
+pesquisa sin hipotesis elegida) con Gate 1a insertado.**
+Resuelta: queda intacto. El soft gate 9C sigue vigente y operativo.
+El Chunk 31D lo reemplazara con Hito 1 como hard gate formal en el
+mismo tramo del pipeline (con estado nuevo hito_1 en pipelineStatus).
+Decision motivada por disciplina de migracion: un chunk migra una
+responsabilidad por vez.
+
+#### Patron arquitectonico: auto-reset atomico en PATCH (Chunks 12C, 31C-2)
+
+El patron de auto-reset atomico es una respuesta arquitectonica al
+problema generico "cuando el campo A cambia, el campo derivado B
+debe invalidarse". Se implementa en backend dentro del handler PATCH,
+sobre el data mergeado, en la misma transaccion de escritura. Dos
+ejemplos canonicos en el producto:
+
+- Chunk 12C: cuando fuentes.length aumenta, data.borrador.desactualizado
+  se setea a true automaticamente.
+- Chunk 31C-2: cuando title o thesis cambian, data.gate_1a archiva el
+  ultimoResultado en historial[] y resetea estado a 'pendiente'.
+
+El patron es preferible a la alternativa de "deteccion en cliente via
+comparacion en render" por tres razones:
+
+1. Atomicidad: es imposible que exista un estado intermedio donde A
+   ya cambio y B aun refleja el valor viejo. La ventana de inconsistencia
+   es cero.
+
+2. Autoridad: el backend es la unica fuente de verdad del estado del
+   proyecto. Cualquier cliente (UI actual, UI futura, curl, script de
+   terceros) obtiene el mismo resultado sin depender de logica de
+   render.
+
+3. Trazabilidad: si el reset implica archivar el valor viejo (como en
+   31C-2 donde ultimoResultado va a historial[]), queda auditable en
+   el data del proyecto sin depender de logs externos.
+
+Conviene aplicar este patron cuando: (a) hay una relacion causal clara
+entre dos campos del mismo row, (b) el campo derivado tiene consecuencias
+en hard gates o UX, (c) el campo fuente se modifica con alguna frecuencia.
+
+No conviene aplicar este patron cuando: (a) la relacion causal es
+difusa (ej. "cuando cambia algo en fuentes, invalidar algo en pitch"),
+(b) el costo computacional del reset es alto (ej. regenerar un resumen),
+(c) el operador tiene razones legitimas para mantener ambos valores
+desincronizados.
+
+#### Contratos nuevos del backend registrados en el Chunk 31C
+
+Los siguientes contratos son estables y pueden ser consumidos por
+clientes futuros:
+
+**Tool 'gate_1a' en /api/ai/generate.** Acepta userMessage con formato
+`TITULO: <string>\nTESIS: <string opcional>`. Devuelve en result:
+`{ supuestos: Gate1aSupuesto[], veredicto_global: 'sano' |
+'requiere_correccion', resumen: string }`. Cada supuesto tiene
+{ id, enunciado, categoria, veredicto, justificacion,
+correccion_sugerida }. Categorias enumeradas: nombre_propio,
+denominacion_oficial, fecha, existencia_entidad. Veredictos
+enumerados: confirmado, dudoso, falso. Loguea consumo contra el
+tenant 'investigapress'.
+
+**Campo data.gate_1a en projects.** Shape persistida:
+`{ estado: 'pendiente' | 'en_revision' | 'aprobado',
+ultimoResultado: Gate1aResultado | null, aprobadoEn: ISO string |
+null, historial: Gate1aResultado[] }`. Gate1aResultado incluye
+enunciado_evaluado: { title, thesis } como snapshot del enunciado
+al momento de la ejecucion (retrocompat con lectores que necesiten
+reconstruir sobre que se ejecuto la revision).
+
+**Code GATE_1A_REQUIRED en PATCH /api/projects/[id].** Devuelto con
+status 400 cuando body.action === 'advance' y project.status ===
+'draft' y data.gate_1a.estado !== 'aprobado'. El cliente debe mostrar
+el error al operador y redirigirlo a la tab gate_1a.
+
+**Code ENUNCIADO_INMUTABLE en PATCH /api/projects/[id].** Devuelto
+con status 400 cuando body contiene title o thesis y
+project.status !== 'draft'. El cliente debe mostrar el error. No es
+recuperable sin retroceso del pipeline.
+
+**Body title y thesis en PATCH /api/projects/[id].** Solo aceptados
+en fase draft. Ediciones atomicas: si alteran el enunciado y existe
+data.gate_1a, el backend archiva ultimoResultado en historial y
+resetea estado a 'pendiente' en el mismo PATCH.
 
