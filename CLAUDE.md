@@ -3308,3 +3308,208 @@ render inline, DT-13 del Chunk 31L); investigacion del
 correcciones editoriales (OA-8). Probablemente estos ultimos no
 pertenecen al Chunk 31 sino a un Chunk 32 de higiene UX transversal y
 un Chunk 33 de revision arquitectonica del gating del pipeline.
+
+### Chunk 31M-DT9 — Agregar 'hito_1' al derivador de fase IP frontend [COMPLETADO 19 abril 2026]
+
+El Chunk 31M-DT9 cierra la regresion no detectada del Chunk 31D-1
+documentada en el Chunk 31L como DT-9: la cabecera de proyecto mostraba
+el chip `[MetricPress]` durante la fase `hito_1` cuando deberia mostrar
+`[InvestigaPress]`, porque el 31D-1 agrego el estado `hito_1` al
+pipeline pero solo actualizo el array `IP_PHASES` del backend
+(`src/app/api/projects/[id]/route.ts` linea 133) sin tocar los dos
+derivadores espejo del frontend. El fix es trivial en superficie
+(dos lineas en dos archivos), pero la sesion expuso un hallazgo
+arquitectonico mayor sobre el environment operativo que se formaliza
+abajo como DT-17.
+
+El chunk se ejecuto en un solo sub-chunk de codigo + uno documental
+(este):
+
+- **31M-DT9-1** `10e1659` feat(chunk31m-dt9): agregar hito_1 al
+  derivador de fase IP frontend. Dos archivos tocados (una linea por
+  archivo, una palabra agregada en cada una):
+  `src/app/projects/[id]/ProjectDetailClient.tsx` linea 425, array
+  `IP_PHASES` local que alimenta el chip de cabecera (linea 2973,
+  `isIPPhase`) y la barra de pipeline (linea 3422, `isIPBar`); y
+  `src/app/projects/ProjectsClient.tsx` linea 64, array
+  `INVESTIGAPRESS_STATUSES` que alimenta el filtro del listado (linea
+  147) y el conteo `countIP` (linea 154). Ambos arrays pasan de
+  `['draft', 'validacion', 'pesquisa']` a `['draft', 'validacion',
+  'hito_1', 'pesquisa']`, preservando el orden simetrico al
+  `PIPELINE_ORDER` canonico del backend (`route.ts` linea 118). Diff
+  total: 2 lineas cambiadas, 2 inserciones, 2 eliminaciones. `npx tsc
+  --noEmit` sin errores. Impacto funcional: el chip de cabecera
+  reconoce ahora `hito_1` como fase IP (detalle de proyecto), y el
+  filtro "InvestigaPress" del listado cuenta correctamente proyectos
+  en esa fase.
+
+- **31M-DT9-2** [DOCUMENTAL] Este bloque.
+
+#### Hallazgo arquitectonico de la sesion: DT-17 — Worktrees stale de Claude Code en Claude Desktop
+
+La sesion del 31M-DT9 expuso un comportamiento del environment
+operativo que debe registrarse formalmente como deuda tecnica nueva
+por su impacto transversal sobre todo el flujo de trabajo con Claude
+Code en IPMP.
+
+**DT-17 — Claude Code en Claude Desktop crea worktrees aislados por
+defecto que quedan stale sin sincronizar con main**. Observacion: en
+la primera ejecucion de Fase 1 del descubrimiento para DT-9, Claude
+Code reporto que el literal `'hito_1'` no existia en ningun archivo
+de `src/`, contradiciendo tanto la documentacion del Chunk 31D-1 como
+el exhibit empirico del caso ARICA 100 que prueba que Hito 1 funciona
+productivamente. La desambiguacion via `git worktree list` revelo la
+causa: el repo tenia tres worktrees aislados en
+`.claude/worktrees/cool-bhaskara/`, `.claude/worktrees/crazy-pasteur/`
+y `.claude/worktrees/frosty-lovelace/`, cada uno anclado a un SHA
+anterior al `04c4dd9` del 31D-1. Claude Code estaba operando desde
+`cool-bhaskara @ bfc9b3b`, un snapshot previo a la introduccion de
+`hito_1` en el pipeline, y reportando hallazgos honestos pero sobre
+codigo obsoleto. El directorio `.claude/worktrees/` contiene tres
+residuos con fechas de creacion del 11, 15 y 19 de abril de 2026,
+evidenciando que el comportamiento lleva al menos ocho dias
+acumulandose sin que el operador lo perciba.
+
+Diagnostico arquitectonico: la feature `isolation: worktree` de los
+subagents de Claude Code (documentada oficialmente en
+`code.claude.com/docs/en/sub-agents`) crea worktrees aislados
+autogenerados con nombres adjetivo-cientifico (patron tipico Docker)
+cuando el modelo decide delegar a un subagente. El directorio
+`.claude/settings.local.json` de IPMP solo contiene allowlist de bash
+(`ls`, `npm run`, `git add`) y no declara ninguna configuracion de
+`isolation`, lo que confirma que el comportamiento es default del
+producto, no consecuencia de configuracion del operador. Ademas, en
+la UI de Claude Desktop, cada nueva sesion de Claude Code muestra un
+checkbox "worktree" que viene MARCADO por default en la barra
+superior del input, reforzando el comportamiento a nivel interfaz.
+
+Impacto para el operador: (a) los worktrees stale pueden producir
+reportes empiricos falsos sobre el estado del codigo, induciendo
+fixes sobre problemas inexistentes; (b) commits aplicados dentro de
+un worktree aislado quedan en branches `claude/*` locales que pueden
+no propagarse a `origin/main` sin intervencion manual; (c) cada
+delegacion a subagente consume tokens adicionales del Plan Max al
+operar sobre filesystems aislados; (d) la acumulacion silenciosa de
+worktrees huerfanos complica el mantenimiento del repo a mediano
+plazo.
+
+Correccion adoptada en esta sesion como defensa en profundidad de
+tres capas simultaneas, todas necesarias:
+
+**Capa 1 — Variable de entorno a nivel usuario de Windows.** Setear
+`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` con
+`[Environment]::SetEnvironmentVariable('CLAUDE_CODE_DISABLE_BACKGROUND_TASKS', '1', 'User')`
+desde PowerShell. Requiere reiniciar Claude Desktop completamente
+(quit desde bandeja del sistema, no solo cerrar la ventana). Validado
+empiricamente: la variable sola NO desactiva la creacion de worktrees
+porque el checkbox de la UI opera en foreground, pero reduce la
+superficie de background tasks.
+
+**Capa 2 — Checkbox "worktree" desmarcado antes de cada prompt.** En
+la barra superior del input de cada nueva sesion de Claude Code en
+Claude Desktop, desmarcar el checkbox etiquetado `worktree` antes de
+mandar el prompt. Es accion manual del operador, no automatizable.
+Cristian debe incorporarlo al ritual de inicio de sesion como si
+fuera poner el cinturon de seguridad.
+
+**Capa 3 — Preambulo defensivo obligatorio en todo prompt de Claude
+Code.** Los prompts del arquitecto al ejecutor ahora comienzan con
+un bloque que ejecuta `cd /c/ipmp-platform`, luego `pwd`,
+`git rev-parse --show-toplevel`, `git branch --show-current`,
+`git rev-parse HEAD`, y `git worktree list`. Si cualquiera de estos
+no coincide con los valores esperados (CWD en toplevel correcto,
+branch main, SHA del HEAD esperado por el arquitecto, una sola
+entrada en worktree list), el prompt obliga a ABORT sin ejecutar el
+resto. Validado empiricamente en esta sesion: la primera iteracion
+del prompt 31M-DT9 disparo ABORT correctamente porque detecto CWD en
+`/c/ipmp-platform/.claude/worktrees/cool-bhaskara`, demostrando que
+la capa funciona como red de seguridad incluso si las otras dos
+fallan.
+
+Las tres capas son complementarias, no redundantes. Capa 1 reduce la
+probabilidad. Capa 2 la elimina en sesiones individuales pero
+depende de disciplina manual. Capa 3 detecta el fallo post-hoc. Si
+alguna falla, las otras cubren. Metodologia incorporada al ritual
+operativo de IPMP.
+
+Limpieza de residuos: tres worktrees huerfanos eliminados de git con
+`git worktree remove --force` + `git worktree prune -v`. Sus branches
+(`claude/cool-bhaskara`, `claude/crazy-pasteur`, `claude/frosty-lovelace`)
+eliminados con `git branch -D`. Directorios fisicos de `competent-raman`
+y `elegant-noyce` eliminados del filesystem. El directorio fisico de
+`cool-bhaskara` quedo residual por `Device or resource busy` (lock de
+proceso, probablemente Claude Desktop mismo apuntando a ese CWD);
+cosmetico, no afecta operacion. Se limpiara en proximo reinicio de
+Windows. A partir de este cierre, `git worktree prune -v` forma parte
+del ritual de cierre de cada sub-chunk documental para evitar
+reacumulacion.
+
+#### Validacion empirica del fix 31M-DT9 con el flow defensivo nuevo
+
+El fix fue aplicado bajo las tres capas simultaneamente en la segunda
+iteracion del prompt (la primera abortio correctamente por CWD
+incorrecto, validando la Capa 3). Secuencia ejecutada:
+
+- Preambulo paso: `pwd = /c/ipmp-platform`, branch `main`, HEAD
+  `b350782b43202fe42ce2cb30d264775cd9af5a57`, una sola entrada en
+  `git worktree list`.
+- Pre-verificacion empirica confirmo el estado diagnosticado:
+  backend ya tenia `hito_1` (linea 133 de `route.ts`), frontend no
+  (linea 425 de `ProjectDetailClient.tsx`, linea 64 de
+  `ProjectsClient.tsx`).
+- Edits aplicados: una linea por archivo, agregando `'hito_1'` en
+  posicion 3 de cada array.
+- `npx tsc --noEmit`: sin errores.
+- `git status`: exactamente los dos archivos modificados.
+- `git diff`: dos lineas cambiadas, diff minimal.
+- Commit `10e1659` con mensaje
+  `feat(chunk31m-dt9): agregar hito_1 al derivador de fase IP frontend`.
+- Push a `origin/main` sin conflictos.
+
+Primer test exitoso end-to-end de la metodologia post-DT-17. El
+preambulo defensivo demostro su valor al abortar la primera
+iteracion, previniendo un fix potencialmente aplicado sobre el
+directorio residual `cool-bhaskara/src/`.
+
+Impacto funcional validado por codigo: el chip de cabecera del
+detalle de proyecto reconoce `hito_1` como fase IP y muestra el chip
+`[InvestigaPress]` durante esa transicion. El filtro del listado
+cuenta proyectos en `hito_1` dentro del total `countIP`. Validacion
+visual en produccion queda pendiente hasta el proximo proyecto IP
+real que transite por `hito_1` (IP-2026-0005 esta preservado como
+fosil 31L en estado `pesquisa`; METRICPRESS-RP-2026-0001 esta en
+estado `exportado`).
+
+#### Actualizacion del plan de sub-chunks del Chunk 31
+
+Post-31M-DT9, la tabla actualizada es:
+
+| Sub-chunk | Nombre | Tipo | Estado |
+|-----------|--------|------|--------|
+| 31A | Eliminacion seccion Herramientas de Produccion del dashboard | Codigo | CERRADO (`e631a2c`). |
+| 31B | Mapa canonico del pipeline IP y diagnostico arquitectonico | Documental | CERRADO. |
+| 31C | Gate 1a: sanity check de supuestos factuales | Codigo | CERRADO. |
+| 31D | Hito 1: validacion de hipotesis elegida | Codigo | CERRADO. |
+| 31I | Exportador de enunciado para correccion externa | Codigo | PARCIAL. 31I-1 (`e219e0b`), 31I-2 (`51236ce`). 31I-3 parser de vuelta y 31I-4 documental pendientes. |
+| 31L | Hard gate `FUENTES_REQUIRED` + retiro soft gate frontend | Codigo | CERRADO. |
+| 31M-DT10 | Inyeccion fecha actual en prompt Gate 1a | Codigo | CERRADO. |
+| 31M-DT9 | Agregar `'hito_1'` al derivador de fase IP frontend | Codigo | CERRADO (`10e1659`). Esta seccion. |
+| 31M-DT11 | Confirm previo al regenerar hipotesis con eleccion persistida | Codigo | Candidato. |
+| 31M-DT15 | Auditoria aritmetica de diferencias temporales en Gate 1a y Borrador IP | Codigo | Candidato. |
+| 31M-DT16 | Inyeccion de fuentes ODF al contexto del Validador IP | Codigo | Candidato. Prioridad media-alta. |
+| 31M-DT17 | Worktrees stale de Claude Code en Claude Desktop | Arquitectonico | DOCUMENTADO en esta seccion. Metodologia de tres capas defensivas incorporada al ritual operativo. No requiere sub-chunk de codigo. |
+| 31N | Soft warning triangulacion `fuentes.length < 3` | Codigo | Candidato. |
+| 31E | Verificaciones criticas como sistema real | Codigo | Pendiente. |
+| 31F | Separacion forense/editorial en prompts | Codigo | Pendiente. |
+| 31G | Importador de borrador IP externo | Codigo | Candidato, no compromiso. |
+| 31H | Cierre documental del Chunk 31 entero | Documental | Todos los anteriores. |
+
+Sub-chunk nuevo emergente de esta sesion: 31M-DT17 (registrado como
+arquitectonico, no requiere codigo). La triplicacion del derivador
+IP/MP observada al resolver DT-9 (tres arrays identicos en
+`route.ts`, `ProjectDetailClient.tsx` y `ProjectsClient.tsx` sin
+fuente canonica compartida) queda registrada como candidato futuro a
+sub-chunk de extraccion a helper canonico en
+`src/lib/pipeline/phases.ts`. No se ejecuta ahora para evitar
+ampliar alcance del 31M-DT9, pero se documenta para consideracion en
+Chunk 32 de higiene arquitectonica transversal.
