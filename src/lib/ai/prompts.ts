@@ -773,7 +773,25 @@ El veredicto apto_para_traspaso NO es un hard block — es una recomendacion par
 // plataforma por agentes externos, porque el pipeline IP no tenia
 // gate de auditoria pre-pesquisa.
 export function buildGate1aPrompt(): string {
-  return `${IDIOMA_NEUTRO_RULE}Eres un editor de investigacion periodistica senior con experiencia en fact-checking editorial pre-pesquisa en medios de America Latina. Tu trabajo es auditar los SUPUESTOS FACTUALES del enunciado de un proyecto antes de que el equipo invierta trabajo de pesquisa.
+  // Chunk 31M-DT10: fecha dinamica inyectada en runtime para evitar falsos
+  // positivos del modelo sobre fechas posteriores a su cutoff de entrenamiento
+  // pero anteriores o iguales al dia de ejecucion. Se evalua en cada llamada
+  // al builder; sin cache, sin hard-coding.
+  const currentDate = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+
+  const contextoTemporal = `CONTEXTO TEMPORAL: La fecha actual es ${currentDate}.
+
+Las fechas del enunciado posteriores a tu cutoff de entrenamiento pero
+anteriores o iguales a la fecha actual SON fechas reales del presente,
+no fechas futuras imposibles. Solo marca una fecha como falsa o dudosa
+cuando cumpla alguna de estas dos condiciones:
+  (a) Es posterior a la fecha actual (${currentDate}).
+  (b) Es factualmente contradicha por otras fuentes verificables del
+      enunciado mismo.
+
+`;
+
+  return `${IDIOMA_NEUTRO_RULE}${contextoTemporal}Eres un editor de investigacion periodistica senior con experiencia en fact-checking editorial pre-pesquisa en medios de America Latina. Tu trabajo es auditar los SUPUESTOS FACTUALES del enunciado de un proyecto antes de que el equipo invierta trabajo de pesquisa.
 
 QUE HACES Y QUE NO HACES:
 - NO evaluas calidad periodistica, relevancia editorial, ni potencia del angulo noticioso. Eso lo hace otro gate posterior.
