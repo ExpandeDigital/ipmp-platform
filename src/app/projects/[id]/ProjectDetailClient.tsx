@@ -291,11 +291,24 @@ interface Gate1aResultado {
   };
 }
 
+/**
+ * Chunk 31I-1: shape del evento de exportacion registrado en backend.
+ * Debe mantenerse en sync con Gate1aExportacionEvent declarado local en
+ * src/app/api/projects/[id]/export-gate1a/route.ts. Si cambia la shape,
+ * actualizar ambos lugares simultaneamente.
+ */
+interface Gate1aExportacionEvent {
+  exportadoEn: string; // ISO timestamp
+  supuestosIncluidos: number;
+  gate1aVeredictoGlobal: 'sano' | 'requiere_correccion';
+}
+
 interface Gate1aData {
   estado: Gate1aEstado;
   ultimoResultado: Gate1aResultado | null;
   aprobadoEn: string | null;
   historial: Gate1aResultado[];
+  exportaciones?: Gate1aExportacionEvent[]; // Chunk 31I — opcional para retrocompat
 }
 
 // Chunk 31D-2: Hito 1 - Validacion de hipotesis elegida (fase hito_1)
@@ -1023,6 +1036,8 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
   const [gate1aError, setGate1aError] = useState<string | null>(null);
   const [gate1aAprobando, setGate1aAprobando] = useState(false);
   const [gate1aEditandoEnunciado, setGate1aEditandoEnunciado] = useState(false);
+  // Chunk 31I-2: estado del exportador de supuestos del Gate 1a
+  const [exportandoGate1a, setExportandoGate1a] = useState(false);
   const [gate1aEditTitle, setGate1aEditTitle] = useState('');
   const [gate1aEditThesis, setGate1aEditThesis] = useState('');
   const [gate1aGuardandoEnunciado, setGate1aGuardandoEnunciado] = useState(false);
@@ -1488,6 +1503,66 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
       alert(err instanceof Error ? err.message : 'Error desconocido');
     } finally {
       setGate1aAprobando(false);
+    }
+  }
+
+  // ── Chunk 31I-2: Gate 1a — exportar supuestos a .docx para correccion externa ──
+  // Consume POST /api/projects/[id]/export-gate1a (Chunk 31I-1).
+  // Descarga el blob como archivo .docx con el filename provisto en el header
+  // Content-Disposition. Errores mapeados a mensajes operativos por code.
+  async function handleExportarGate1a() {
+    if (!project || exportandoGate1a) return;
+
+    setExportandoGate1a(true);
+    try {
+      const res = await fetch(`/api/projects/${project.id}/export-gate1a`, {
+        method: 'POST',
+      });
+
+      if (!res.ok) {
+        let errorJson: { error?: string; code?: string } = {};
+        try {
+          errorJson = await res.json();
+        } catch {
+          // Response no es JSON parseable; usar fallback
+        }
+
+        const mensajes: Record<string, string> = {
+          PROJECT_NOT_FOUND: 'El proyecto no existe o fue eliminado.',
+          GATE1A_NOT_EXECUTED: 'El Gate 1a aun no fue ejecutado. Ejecutalo primero.',
+          GATE1A_NOT_REQUIRES_CORRECTION: 'El Gate 1a no requiere correccion. La exportacion no aplica.',
+          NO_SUPUESTOS_PENDIENTES: 'No hay supuestos pendientes de resolver. No hay nada que exportar.',
+          EXPORT_GENERATION_FAILED: 'Error generando el documento. Intenta nuevamente.',
+        };
+
+        const code = errorJson.code ?? '';
+        const mensaje = mensajes[code] ?? errorJson.error ?? `Error ${res.status}`;
+        alert(`Exportacion fallida: ${mensaje}`);
+        return;
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+
+      // Extraer filename del header Content-Disposition
+      const cd = res.headers.get('Content-Disposition') ?? '';
+      const match = cd.match(/filename="([^"]+)"/);
+      const filename = match ? match[1] : `GATE1A_${project.publicId}.docx`;
+
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      alert('Exportacion realizada. El archivo se descargo en tu carpeta de descargas.');
+    } catch (error) {
+      console.error('[handleExportarGate1a] error inesperado:', error);
+      alert('Error de red exportando el Gate 1a. Revisa tu conexion y reintentalo.');
+    } finally {
+      setExportandoGate1a(false);
     }
   }
 
@@ -3955,6 +4030,24 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                               {gate1aAprobando ? 'Aprobando...' : 'Aprobar revisión'}
                             </button>
                           )}
+                          {/* Chunk 31I-2: exportar supuestos a .docx para correccion externa */}
+                          {tieneResultado && resultado?.veredicto_global === 'requiere_correccion' && (() => {
+                            const supuestosPendientes = (resultado.supuestos ?? []).filter(
+                              (s) => s.veredicto === 'dudoso' || s.veredicto === 'falso',
+                            );
+                            if (supuestosPendientes.length === 0) return null;
+                            return (
+                              <button
+                                type="button"
+                                onClick={handleExportarGate1a}
+                                disabled={exportandoGate1a}
+                                className="bg-amber-600 text-white px-4 py-2 rounded hover:bg-amber-700 disabled:bg-gray-400"
+                                title="Exporta los supuestos dudosos o falsos a un documento Word que podés llevar a un motor de verificacion externo"
+                              >
+                                {exportandoGate1a ? 'Exportando...' : 'Exportar supuestos para correccion externa'}
+                              </button>
+                            );
+                          })()}
                         </div>
                       )}
 
