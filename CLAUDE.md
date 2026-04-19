@@ -3023,3 +3023,288 @@ Sub-chunk adicional implicito candidato: unificacion de UX de errores
 del pipeline (migracion de `alert()` a render inline, DT-13). Fuera de
 la nomenclatura del Chunk 31 por ser mejora de UX transversal; podria
 ir en un Chunk 32 de higiene UX.
+
+### Chunk 31M-DT10 — Inyeccion de fecha actual en system prompt Gate 1a [COMPLETADO 19 abril 2026]
+
+El Chunk 31M-DT10 es un sub-chunk parcial del Chunk 31M (higiene
+post-31L originalmente diseñado para consolidar DT-9 + DT-10 + DT-11
+como tres fixes pequeños en una sesion corta). Se ejecuto solo la parte
+DT-10 por requerimiento editorial emergente: el caso de prueba ARICA 100
+(caso investigado el 18 de abril de 2026 con verificacion forense
+externa produciendo 24 fuentes documentales) contenia 7+ fechas
+estructurales posteriores al cutoff de entrenamiento del modelo Sonnet 4
+(~abril 2025), y el Gate 1a las marcaba sistematicamente como `falso`
+con justificacion "fecha futura imposible". Sin el fix, el test
+editorial de ARICA 100 requerira aprobar asumiendo riesgo cada gate con
+fechas, comprometiendo el valor empirico del test. DT-9 (chip MP en
+fase hito_1) y DT-11 (confirm al regenerar hipotesis) quedan pendientes
+de sub-chunks futuros.
+
+El chunk se ejecuto en un solo sub-chunk de codigo + uno documental
+(este):
+
+- **31M-DT10-1** `622609b` feat(chunk31m-dt10): inyeccion fecha actual
+  en system prompt Gate 1a. Un solo archivo tocado:
+  `src/lib/ai/prompts.ts` (+19/-1 netas). El edit prepende al system
+  prompt de `buildGate1aPrompt()` (linea 776) un bloque
+  `contextoTemporal` que declara la fecha actual via
+  `new Date().toISOString().split('T')[0]` evaluada dentro del cuerpo
+  de la funcion (no a nivel modulo, garantizando fecha fresca en cada
+  invocacion sin staleness entre dias). El bloque define dos
+  condiciones estrictas para marcar una fecha como dudosa o falsa: (a)
+  es posterior a la fecha actual, o (b) es factualmente contradicha por
+  otras fuentes verificables del enunciado mismo. El orden resultante
+  del prompt es `${IDIOMA_NEUTRO_RULE}${contextoTemporal}${systemPromptOriginal}`,
+  respetando la precedencia regla-idioma → marco-temporal → rol →
+  instrucciones. El patron aplica automaticamente al wrapper MP de Gate 1a
+  (linea 986) por llamada directa a `buildGate1aPrompt()` sin envolver,
+  propagando el fix a ambos contextos sin duplicacion. Otros 10 prompt
+  builders del archivo no se tocan (ninguno audita fechas como
+  categoria factual). Invariantes preservados: `grep -c
+  "IDIOMA_NEUTRO_RULE" src/lib/ai/prompts.ts` = 10 pre y post edit;
+  `npx tsc --noEmit` sin errores. Impacto en tokens: ~100 tokens extra
+  por llamada al Gate 1a, despreciable.
+
+- **31M-DT10-2** [DOCUMENTAL] Este bloque.
+
+#### Validacion empirica del fix 31M-DT10 con caso ARICA 100
+
+El fix fue validado empiricamente el mismo 19 de abril 2026 con un caso
+editorial real: METRICPRESS-RP-2026-0001 (ex IP-2026-0006) sobre
+destino institucional del informe Comision Asesora Presidencial Arica
+100 tras cambio de gobierno Boric-Kast. El enunciado de prueba contenia
+siete fechas estructurales posteriores al cutoff: 11 de marzo de 2026
+(cambio de gobierno), 6 de marzo de 2026 (entrega del informe), 19 de
+abril de 2026 (fecha de verificacion forense), 9 de junio de 2025
+(primera sesion), 14 de julio de 2025 (declaracion Paco), abril 2026
+(Plan Escudo 40%), Ley de Presupuestos 2026.
+
+El Gate 1a post-fix produjo veredicto `requiere_correccion` con 6
+supuestos marcados como `dudoso` (ninguno como `falso`). Las
+justificaciones del modelo **eliminaron completamente** las menciones a
+"cutoff", "futura imposible" o "posterior a mi corte de conocimiento"
+que producia el comportamiento pre-fix. Ejemplo empirico del cambio:
+
+**Pre-fix (IP-2026-0005, 18 abril 2026)**:
+> *"La fecha 19 de abril de 2026 es posterior a mi corte de conocimiento
+> y representa una fecha futura imposible"* (veredicto: `falso`)
+
+**Post-fix (IP-2026-0006, 19 abril 2026)**:
+> *"La fecha coincide con el calendario tradicional de cambios
+> presidenciales en Chile, pero no tengo certeza sobre la fecha exacta
+> para 2026"* (veredicto: `dudoso`)
+
+El fix elimino quirurgicamente el falso positivo epistemico sobre cutoff
+sin desactivar la auditoria legitima por incertidumbre. El modelo ahora
+razona honestamente sobre que puede y que no puede verificar, y hasta
+incorpora contexto relevante (calendario tradicional chileno) al
+evaluar. Validacion arquitectonica completa.
+
+#### Exhibit editorial empirico — caso METRICPRESS-RP-2026-0001
+
+El caso ARICA 100 fue el primer proyecto editorial real ejercitado en
+el pipeline canonico completo de la plataforma. Creado como proyecto
+IP-2026-0006 (titulo: "Destino institucional de las 19 medidas Arica
+100 tras cambio de gobierno") a las 14:10 del 19 abril 2026, traspasado
+a tenant MetricPress + template `[RP] Reportaje en profundidad` como
+METRICPRESS-RP-2026-0001 a las 15:49, exportado a las 18:58. Duracion
+total: 4 horas 48 minutos.
+
+Hitos ejecutados (todos persistidos en `data` del proyecto):
+
+| Hito | Estado | Resultado |
+|------|--------|-----------|
+| Gate 1a (31C) | aprobado asumiendo riesgo | 6 supuestos dudoso (ninguno falso) |
+| Avance a validacion | ok | sin regresion |
+| Generador de Hipotesis | 5 hipotesis generadas | cobertura editorial completa |
+| Eleccion de hipotesis | #1 (decreto / instrumento juridico) | riesgo BAJO declarado |
+| Hito 1 (31D) | aprobado | veredicto `coherente` en 3 dimensiones |
+| Avance a pesquisa | ok | pipeline bar actualizado |
+| Organizador de Fuentes | 4 fuentes verificadas | 1 con adjunto VF2 |
+| Generador Borrador IP (Chunk 18) | modo diagnostico | 847 palabras |
+| Exportador Gate 1a (31I-2 bonus) | ejecutado | DOCX con 6 secciones contrato |
+| Validador IP | 3 corridas persistidas | score final 2.5/5 (afectado por DT-16) |
+| Traspaso (Chunk 18) | ok | tenant=metricpress, template=RP |
+| Generador Borrador MP (Chunk 18) | modo metricpress | 847 palabras, correcciones aplicadas |
+| Export | ok | 4 archivos producidos en ZIP |
+
+Entregable final exportado:
+- `Reportaje en profundidad #U2014 Sin rastro juridico las 19 medidas
+  de Arica 100.docx` (11 KB) — reportaje publicable como andamio
+  preliminar, ~900 palabras, 7 marcadores `[VERIFICAR]`, atribuciones
+  correctas, disciplina forense preservada.
+- `Reportaje en profundidad #U2014 Fuentes del expediente.docx` (10 KB)
+  — tabla de las 4 fuentes ODF con URLs, rol, estado, confianza.
+- `Reportaje en profundidad #U2014 Hipotesis de investigacion.docx`
+  (10 KB) — hipotesis elegida + verificaciones criticas + evidencia
+  requerida.
+- `proyecto.json` (61 KB) — audit trail completo serializado del state
+  del proyecto (gates aprobados, validaciones, borradores IP+MP, notas
+  del operador, timestamps).
+
+El caso quedo archivado como exhibit empirico del pipeline canonico
+funcional. Contraste deliberado con IP-2026-0005 (fosil del test del
+hard gate 31L, preservado intacto en Railway).
+
+#### Hallazgos emergentes del caso ARICA 100
+
+La sesion editorial produjo alta densidad de hallazgos arquitectonicos:
+dos DT nuevos y ocho observaciones arquitectonicas. Ademas confirmo
+empiricamente tres DT preexistentes documentados en el handoff del 31L.
+
+**DT-15 — Gate 1a y Borrador IP no auditan calculos de diferencia
+temporal en el enunciado**. Observacion: el Gate 1a pasa y el Borrador
+IP produce un reportaje con la frase "A cinco meses del cambio de
+gobierno" cuando el cambio de gobierno fue el 11 de marzo de 2026 y la
+fecha de generacion es el 19 de abril de 2026 (diferencia real: 1 mes
+8 dias, no 5 meses). El fix del 31M-DT10 resolvio el problema de
+fechas marcadas como falsas por cutoff, pero deja intacto el problema
+distinto de auditoria aritmetica de diferencias temporales. El operador
+humano detecto el error editorialmente al revisar el Borrador IP. Fix
+candidato: ampliar el bloque `CONTEXTO TEMPORAL` del prompt Gate 1a y
+Borrador IP con instruccion explicita "Cuando el enunciado usa
+expresiones relativas tipo 'a N meses/años de fecha Y' o 'N meses
+despues de Y', verifica aritmeticamente la diferencia contra la fecha
+actual ({YYYY-MM-DD}) antes de aceptarla como valida". Impacto:
+editorial (propaga errores factuales hacia abajo en el pipeline).
+Candidato a sub-chunk futuro.
+
+**DT-16 — Validador IP evalua el borrador sin cross-reference con el
+ODF del proyecto**. Observacion: METRICPRESS-RP-2026-0001 tenia 4
+fuentes cargadas en el ODF (estado `Verificada`, confianza `Alta`) pero
+el Validador IP devolvio puntaje 1.5/5 en la dimension "Calidad de
+fuentes citadas" con justificacion literal "fuentes no aparecen
+documentadas en el expediente proporcionado". Las fuentes citadas en
+el borrador (T13, G5 Noticias, Radio Estacion, Minsegpres) coinciden
+textualmente con los titulos de las tarjetas ODF. El Validador no
+tiene visibilidad del ODF en su contexto; evalua solo el texto plano
+del borrador. Esto produce falso negativo grave en dos dimensiones
+(Calidad de fuentes + Modo de operacion declarado) y degrada el score
+global artificialmente. El score 2.5/5 registrado para ARICA 100 es
+techo estructural de esta limitacion, no evaluacion real del borrador.
+Fix candidato: inyectar al prompt del Validador IP el listado de
+fuentes ODF del proyecto como contexto explicito antes de pedir
+evaluacion, simetrico al patron del Generador de Borrador IP que si
+consume las fuentes. Impacto: degrada la metrica de calidad de todos
+los proyectos que no adjuntan archivos a todas las fuentes. Prioridad
+media-alta. Candidato a sub-chunk futuro.
+
+**Observaciones arquitectonicas adicionales** (OA-1 a OA-8, registradas
+para trazabilidad sin accion inmediata):
+
+OA-1 — El modal de traspaso lee score `2.8/5.0` cuando la ultima
+corrida del Validador IP devolvio `2.5/5.0`. Persiste primer score, no
+ultimo. Investigar comportamiento del historial.
+
+OA-2 — Warning "modo diagnostico ODF sin fuentes verificadas" del
+modal de traspaso es declarativo basado en modo del Borrador IP, no en
+conteo real de fuentes verificadas. Se dispara incluso con 4 fuentes
+verificadas cargadas.
+
+OA-3 — Feedback Validador IP → Generador MP no esta automatizado. Las
+recomendaciones editoriales del Validador IP son meta-informacion
+valiosa para la fase MP pero el pipeline no las propaga
+estructuradamente. El operador debe transcribir recomendaciones
+validas al campo "notas al generador" del Borrador MP. Fix candidato:
+inyectar `data.validador_ip.recomendaciones` al contexto del prompt MP.
+
+OA-4 — Generador de Borrador MP respeta disciplina anti-fabricacion
+sobre restriccion de extension minima cuando el expediente es
+limitado. Evidencia: produjo 847 palabras con metadata explicita
+justificando el undershoot por ausencia de pesquisa de campo, cuando
+la instruccion era "1500-3000 palabras". Comportamiento correcto.
+
+OA-5 — La UI del Generador de Borrador MP tiene un exportador de
+verificaciones criticas pendientes como prompt estructurado para motor
+externo, simetrico al Chunk 31I-2 aplicado a Gate 1a. Patron positivo
+que permite hibridacion editorial con investigacion externa.
+
+OA-6 — *[Insight del operador Cristian Jofre]* La plataforma IPMP es
+intrinsecamente hibrida. No produce reportajes concluidos sin
+intervencion externa; produce andamios editoriales completos (borrador
+estructurado + fuentes catalogadas + verificaciones pendientes marcadas
++ pitch + visual) que requieren pesquisa de campo humana para cerrar
+brechas. Los puntos naturales de hibridacion son: (a) Gate 1a →
+correcciones externas (Chunk 31I), (b) ODF → fuentes cargadas desde
+pesquisa humana, (c) Borrador MP → investigacion externa sobre
+verificaciones pendientes (mismo patron Chunk 31I aplicado a
+produccion), (d) Entrevistas y transparencia que requieren interaccion
+humana. El pipeline no pretende reemplazar redaccion, sino orquestar la
+parte orquestable. Diseño sano. Este principio arquitectonico merece
+pasar a la seccion de principios fundacionales de la plataforma en
+futura consolidacion documental.
+
+OA-7 — El gate de export permite exportacion sin pitch, visual ni
+validador_mp. El pipeline permite llegar al estado `exportado` con solo
+gate_1a aprobado + hito_1 aprobado + ≥1 fuente + borrador_ip + borrador
+(MP). El paquete ZIP se produce desde ese state. Incertidumbre: si el
+gate es asi por diseño (permite export preliminar) o si evoluciono
+desde el handoff original del Chunk 18 (que declaraba
+`EXPORT_GATE_FAILED` con cinco condiciones). Investigar en sesion
+documental futura.
+
+OA-8 — Correcciones editoriales aplicadas en fase produccion (Borrador
+MP) no se propagan hacia atras a campos persistidos en fase validacion
+(gancho de hipotesis elegida). Evidencia: el DOCX de Hipotesis de
+Investigacion del export ARICA 100 contiene el gancho original "A
+cinco meses del cambio de gobierno" no corregido, mientras el Borrador
+MP si tiene la correccion aplicada. El pipeline no reescribe hacia
+atras; las correcciones solo afectan aguas abajo. Es arquitectonicamente
+correcto (preserva immutabilidad del historico editorial) pero el
+operador debe ser consciente que el paquete exportado puede contener
+formulaciones superadas en DOCX auxiliares. Solucion candidata: nota
+editorial automatica al DOCX de Hipotesis tipo "este gancho fue
+reformulado en el borrador final" cuando el timestamp del borrador es
+posterior al timestamp de eleccion de hipotesis.
+
+**DT preexistentes confirmados empiricamente en esta sesion**:
+
+- **DT-7** (Chunk 13B, em-dash en filenames): los 3 DOCX del export
+  ARICA 100 usan `#U2014` en vez de `—` en el nombre de archivo. Fix
+  pendiente de sub-chunk trivial.
+
+- **DT-9** (regresion del 31D-1): el chip de cabecera aparece como
+  `⚙️ MetricPress` durante fase `hito_1` de proyecto IP. Al pasar a
+  `pesquisa` vuelve correctamente a `🔍 InvestigaPress`. Reproduccion
+  empirica del patron ya documentado en el Chunk 31L. Fix candidato:
+  agregar `'hito_1'` al array de estados IP del derivador de fase
+  frontend/backend.
+
+- **DT-10** (el mismo que este chunk resolvio): confirmado que el
+  comportamiento pre-fix marcaba fechas post-cutoff como `falso` con
+  justificacion "fecha futura imposible", y el comportamiento post-fix
+  las marca como `dudoso` con razonamiento contextual. Validacion
+  empirica del fix.
+
+#### Actualizacion del plan de sub-chunks del Chunk 31
+
+La tabla del sub-chunk 31B documentaba el plan original. Post-31M-DT10,
+la tabla actualizada es:
+
+| Sub-chunk | Nombre | Tipo | Estado |
+|-----------|--------|------|--------|
+| 31A | Eliminacion seccion Herramientas de Produccion del dashboard | Codigo | CERRADO (`e631a2c`). |
+| 31B | Mapa canonico del pipeline IP y diagnostico arquitectonico | Documental | CERRADO. |
+| 31C | Gate 1a: sanity check de supuestos factuales | Codigo | CERRADO. |
+| 31D | Hito 1: validacion de hipotesis elegida | Codigo | CERRADO. |
+| 31I | Exportador de enunciado para correccion externa | Codigo | PARCIAL. 31I-1 (`e219e0b`), 31I-2 (`51236ce`). 31I-3 parser de vuelta y 31I-4 documental pendientes. |
+| 31L | Hard gate `FUENTES_REQUIRED` + retiro soft gate frontend | Codigo | CERRADO. |
+| 31M-DT10 | Inyeccion fecha actual en prompt Gate 1a | Codigo | CERRADO. Esta seccion. |
+| 31M-DT9 | Agregar `'hito_1'` al array de estados IP del derivador | Codigo | Candidato. Fix trivial. |
+| 31M-DT11 | Confirm previo al regenerar hipotesis con eleccion persistida | Codigo | Candidato. |
+| 31M-DT15 | Auditoria aritmetica de diferencias temporales en Gate 1a y Borrador IP | Codigo | Candidato nuevo (DT-15). |
+| 31M-DT16 | Inyeccion de fuentes ODF al contexto del Validador IP | Codigo | Candidato nuevo (DT-16). Prioridad media-alta. |
+| 31N | Soft warning triangulacion `fuentes.length < 3` | Codigo | Candidato. |
+| 31E | Verificaciones criticas como sistema real | Codigo | Pendiente. |
+| 31F | Separacion forense/editorial en prompts | Codigo | Pendiente. |
+| 31G | Importador de borrador IP externo | Codigo | Candidato, no compromiso. |
+| 31H | Cierre documental del Chunk 31 entero | Documental | Todos los anteriores. |
+
+Sub-chunks nuevos candidatos emergentes de la sesion ARICA 100: 31M-DT15,
+31M-DT16. Sub-chunks nuevos de tipo UX/arquitectura transversal
+candidatos: unificacion de UX de errores del pipeline (`alert()` →
+render inline, DT-13 del Chunk 31L); investigacion del
+`EXPORT_GATE_FAILED` (OA-7); auditoria de propagacion hacia atras de
+correcciones editoriales (OA-8). Probablemente estos ultimos no
+pertenecen al Chunk 31 sino a un Chunk 32 de higiene UX transversal y
+un Chunk 33 de revision arquitectonica del gating del pipeline.
