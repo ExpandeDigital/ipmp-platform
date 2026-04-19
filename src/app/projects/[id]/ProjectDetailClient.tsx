@@ -298,6 +298,48 @@ interface Gate1aData {
   historial: Gate1aResultado[];
 }
 
+// Chunk 31D-2: Hito 1 - Validacion de hipotesis elegida (fase hito_1)
+type Hito1VeredictoCorrectivo = 'coherente' | 'requiere_reformulacion' | 'inviable';
+type Hito1Estado = 'pendiente' | 'en_revision' | 'aprobado';
+
+interface Hito1Dimension {
+  pasa: boolean;
+  justificacion: string;
+}
+
+interface Hito1Correctivo {
+  veredicto: Hito1VeredictoCorrectivo;
+  dimensiones: {
+    coherencia: Hito1Dimension;
+    falsabilidad: Hito1Dimension;
+    viabilidad_factual: Hito1Dimension;
+  };
+  problemas_detectados: string[];
+  reformulacion_sugerida: string | null;
+}
+
+interface Hito1Optimizadora {
+  existe_angulo_mejor: boolean;
+  angulo_sugerido: string | null;
+  justificacion: string;
+  trade_offs: string[];
+}
+
+interface Hito1Resultado {
+  correctivo: Hito1Correctivo;
+  optimizadora: Hito1Optimizadora;
+  resumen: string;
+  ejecutadoEn: string;
+  hipotesis_evaluada: HipotesisElegida;
+}
+
+interface Hito1Data {
+  estado: Hito1Estado;
+  ultimoResultado: Hito1Resultado | null;
+  aprobadoEn: string | null;
+  historial: Hito1Resultado[];
+}
+
 // Chunk 20A: imagen visual generada externamente
 interface ImagenVisualData {
   url: string;
@@ -334,7 +376,7 @@ interface TemplateOption {
   reviewLevel: string;
 }
 
-type ActiveTool = 'gate_1a' | 'hipotesis' | 'vhp' | 'odf' | 'pitch' | 'radar' | 'validador' | 'validador_ip' | 'borrador' | 'borrador_ip' | 'exportador' | 'prompt_visual' | 'vista_previa';
+type ActiveTool = 'gate_1a' | 'hito_1' | 'hipotesis' | 'vhp' | 'odf' | 'pitch' | 'radar' | 'validador' | 'validador_ip' | 'borrador' | 'borrador_ip' | 'exportador' | 'prompt_visual' | 'vista_previa';
 
 interface PhaseConfig {
   tabs: { key: ActiveTool; label: string; subtitle?: string }[];
@@ -516,6 +558,12 @@ const PHASE_CONFIG: Record<string, PhaseConfig> = {
       { key: 'hipotesis', label: '🔬 Generador de Hipótesis', subtitle: 'Genera hipotesis periodisticas a partir del tema del proyecto' },
       { key: 'vhp', label: '🧪 Validador de Hipótesis y Pista', subtitle: 'Evalua la viabilidad de un lead contra la hipotesis elegida' },
     ],
+  },
+  hito_1: {
+    tabs: [
+      { key: 'hito_1', label: '🎯 Hito 1 - Validacion de Hipotesis', subtitle: 'Valida la hipotesis elegida antes de abrir pesquisa: coherencia, falsabilidad, viabilidad factual + angulo optimo' },
+    ],
+    info: 'La hipotesis elegida debe pasar una validacion critica antes de invertir trabajo de pesquisa. El Hito 1 audita tres dimensiones (coherencia interna, falsabilidad, viabilidad factual) como gate bloqueante y propone un angulo mejor si existe (informativo).',
   },
   pesquisa: {
     tabs: [
@@ -980,6 +1028,12 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
   const [gate1aGuardandoEnunciado, setGate1aGuardandoEnunciado] = useState(false);
   const [gate1aVerHistorial, setGate1aVerHistorial] = useState(false);
 
+  // Chunk 31D-2: Hito 1 - estados locales
+  const [ejecutandoHito1, setEjecutandoHito1] = useState(false);
+  const [aprobandoHito1, setAprobandoHito1] = useState(false);
+  const [hito1Error, setHito1Error] = useState<string | null>(null);
+  const [verHistorialHito1, setVerHistorialHito1] = useState(false);
+
   // Generador de Borrador — Chunk 8
   const [borradorOperadorNotas, setBorradorOperadorNotas] = useState('');
   const [generandoBorrador, setGenerandoBorrador] = useState(false);
@@ -1146,17 +1200,9 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
 
     // Chunk 9C (E1): Soft gates confirmables en transiciones criticas del pipeline.
     // No reemplazan el hard-block del traspaso (que sigue activo abajo).
-    if (action === 'advance' && project.status === 'validacion') {
-      const dataObj = (project.data ?? {}) as Record<string, unknown>;
-      const tieneHipotesisElegida =
-        !!dataObj.hipotesis_elegida && typeof dataObj.hipotesis_elegida === 'object';
-      if (!tieneHipotesisElegida) {
-        const ok = confirm(
-          'No elegiste ninguna hipotesis. La fase Pesquisa funciona mejor con una hipotesis ancla. ¿Avanzar igual?'
-        );
-        if (!ok) return;
-      }
-    }
+    // Chunk 31D-2: Soft gate 9C eliminado. Reemplazado por hard gate
+    // HIPOTESIS_ELEGIDA_REQUIRED del backend (Chunk 31D-1) que opera
+    // en la transicion validacion -> hito_1.
     if (action === 'advance' && project.status === 'pesquisa') {
       const dataObj = (project.data ?? {}) as Record<string, unknown>;
       const fuentes = (dataObj.fuentes as unknown[] | undefined) ?? [];
@@ -1223,6 +1269,16 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
         if (json.code === 'GATE_1A_REQUIRED') {
           alert(json.error);
           setActiveTool('gate_1a');
+          return;
+        }
+        if (json.code === 'HIPOTESIS_ELEGIDA_REQUIRED') {
+          alert(json.error);
+          setActiveTool('hipotesis');
+          return;
+        }
+        if (json.code === 'HITO_1_REQUIRED') {
+          alert(json.error);
+          setActiveTool('hito_1');
           return;
         }
         if (json.code === 'ENUNCIADO_INMUTABLE') {
@@ -1432,6 +1488,116 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
       alert(err instanceof Error ? err.message : 'Error desconocido');
     } finally {
       setGate1aAprobando(false);
+    }
+  }
+
+  // ── Chunk 31D-2: Hito 1 — ejecutar llamada IA ──
+  async function handleEjecutarHito1() {
+    if (!project || ejecutandoHito1) return;
+    const dataObj = (project.data ?? {}) as Record<string, unknown>;
+    const hipotesisElegida = dataObj.hipotesis_elegida as HipotesisElegida | undefined;
+    if (!hipotesisElegida) {
+      setHito1Error('No hay hipotesis elegida. Volve al tab Generador de Hipotesis en la fase anterior.');
+      return;
+    }
+
+    setEjecutandoHito1(true);
+    setHito1Error(null);
+    try {
+      const userMessage = [
+        `TITULO: ${project.title}`,
+        `TESIS: ${project.thesis ?? '(no declarada)'}`,
+        'HIPOTESIS ELEGIDA:',
+        JSON.stringify(hipotesisElegida, null, 2),
+      ].join('\n');
+
+      const res = await fetch('/api/ai/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tool: 'hito_1', userMessage }),
+      });
+      const json = await res.json();
+      if (!res.ok || json.parseError) {
+        throw new Error(json.error || json.parseError || 'Error ejecutando Hito 1');
+      }
+
+      const result = json.result as Omit<Hito1Resultado, 'ejecutadoEn' | 'hipotesis_evaluada'>;
+      const nuevoResultado: Hito1Resultado = {
+        ...result,
+        ejecutadoEn: new Date().toISOString(),
+        hipotesis_evaluada: hipotesisElegida,
+      };
+
+      const hito1Actual = (dataObj.hito_1 as Hito1Data | undefined) ?? {
+        estado: 'pendiente' as Hito1Estado,
+        ultimoResultado: null,
+        aprobadoEn: null,
+        historial: [],
+      };
+
+      const nuevoHistorial = hito1Actual.ultimoResultado
+        ? [...hito1Actual.historial, hito1Actual.ultimoResultado]
+        : hito1Actual.historial;
+
+      const nuevaData: Hito1Data = {
+        estado: 'en_revision',
+        ultimoResultado: nuevoResultado,
+        aprobadoEn: null,
+        historial: nuevoHistorial,
+      };
+
+      const patchRes = await fetch(`/api/projects/${project.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: { hito_1: nuevaData } }),
+      });
+      if (!patchRes.ok) throw new Error('Error persistiendo resultado del Hito 1');
+
+      await fetchProject();
+    } catch (err) {
+      setHito1Error(err instanceof Error ? err.message : 'Error desconocido');
+    } finally {
+      setEjecutandoHito1(false);
+    }
+  }
+
+  // ── Chunk 31D-2: Hito 1 — aprobar revision ──
+  async function handleAprobarHito1() {
+    if (!project || aprobandoHito1) return;
+    const dataObj = (project.data ?? {}) as Record<string, unknown>;
+    const hito1 = dataObj.hito_1 as Hito1Data | undefined;
+    if (!hito1?.ultimoResultado) {
+      setHito1Error('Ejecuta el Hito 1 antes de aprobarlo.');
+      return;
+    }
+
+    const veredicto = hito1.ultimoResultado.correctivo.veredicto;
+    if (veredicto !== 'coherente') {
+      const ok = confirm(
+        `El Hito 1 determino veredicto "${veredicto}" en la revision correctiva. Aprobar asumiendo el riesgo de avanzar con una hipotesis que el modelo flaggeo como problematica?`
+      );
+      if (!ok) return;
+    }
+
+    setAprobandoHito1(true);
+    setHito1Error(null);
+    try {
+      const nuevaData: Hito1Data = {
+        ...hito1,
+        estado: 'aprobado',
+        aprobadoEn: new Date().toISOString(),
+      };
+      const res = await fetch(`/api/projects/${project.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: { hito_1: nuevaData } }),
+      });
+      if (!res.ok) throw new Error('Error aprobando el Hito 1');
+      await fetchProject();
+    } catch (err) {
+      setHito1Error(err instanceof Error ? err.message : 'Error desconocido');
+    } finally {
+      setAprobandoHito1(false);
     }
   }
 
@@ -3871,6 +4037,205 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                                 </div>
                               ))}
                             </div>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+              </div>
+            )}
+
+            {/* ── TAB: Hito 1 — Validacion de hipotesis elegida (fase hito_1) ── */}
+            {activeTool === 'hito_1' && (
+              <div className="space-y-6">
+                {(() => {
+                  const dataObj = (project.data ?? {}) as Record<string, unknown>;
+                  const hipotesisElegida = dataObj.hipotesis_elegida as HipotesisElegida | undefined;
+                  const hito1 = (dataObj.hito_1 as Hito1Data | undefined) ?? {
+                    estado: 'pendiente' as Hito1Estado,
+                    ultimoResultado: null,
+                    aprobadoEn: null,
+                    historial: [],
+                  };
+
+                  if (!hipotesisElegida) {
+                    return (
+                      <div className="rounded-lg border border-amber-500/40 bg-amber-950/30 p-4 text-sm text-amber-100">
+                        <strong>No hay hipotesis elegida.</strong> Retrocedé al pipeline y elegí una hipotesis en el tab <em>Generador de Hipotesis</em> de la fase anterior. El Hito 1 necesita una hipotesis elegida para poder validarla.
+                      </div>
+                    );
+                  }
+
+                  const resultado = hito1.ultimoResultado;
+                  const aprobado = hito1.estado === 'aprobado';
+                  const veredictoCorrectivo = resultado?.correctivo.veredicto;
+
+                  // Color semaforizado del panel correctivo
+                  const correctivoColor =
+                    veredictoCorrectivo === 'coherente' ? 'border-emerald-500/60 bg-emerald-950/30' :
+                    veredictoCorrectivo === 'requiere_reformulacion' ? 'border-amber-500/60 bg-amber-950/30' :
+                    veredictoCorrectivo === 'inviable' ? 'border-red-500/60 bg-red-950/30' :
+                    'border-slate-700 bg-slate-900/40';
+
+                  return (
+                    <>
+                      {/* Encabezado + introduccion */}
+                      {!resultado && (
+                        <div className="rounded-lg border border-slate-700 bg-slate-900/40 p-4 text-sm text-slate-300">
+                          <p className="mb-2"><strong>Hito 1 - Validacion de la hipotesis elegida.</strong></p>
+                          <p className="mb-2">Antes de invertir trabajo de pesquisa, el modelo evalua la hipotesis elegida en dos capas separadas:</p>
+                          <ul className="list-disc pl-5 space-y-1">
+                            <li><strong>Correctivo</strong> (bloqueante): coherencia interna, falsabilidad, viabilidad factual. Si una dimension falla, el modelo propone reformulacion.</li>
+                            <li><strong>Optimizadora</strong> (informativo): existe un angulo con mas potencia periodistica? Si existe, el modelo lo propone con sus trade-offs.</li>
+                          </ul>
+                        </div>
+                      )}
+
+                      {/* Resumen de la hipotesis que se va a evaluar */}
+                      <div className="rounded-lg border border-slate-700 bg-slate-900/40 p-4 text-sm">
+                        <p className="text-xs uppercase tracking-wide text-slate-400 mb-1">Hipotesis elegida a evaluar</p>
+                        <p className="text-slate-100 font-medium">{hipotesisElegida.titulo ?? '(sin titulo)'}</p>
+                        {hipotesisElegida.pregunta_clave && (
+                          <p className="text-slate-300 mt-1 text-xs">Pregunta clave: {hipotesisElegida.pregunta_clave}</p>
+                        )}
+                      </div>
+
+                      {/* Badge de aprobacion si aplica */}
+                      {aprobado && (
+                        <div className="rounded-lg border border-emerald-500/60 bg-emerald-950/30 p-3 text-sm text-emerald-100">
+                          ✅ <strong>Hito 1 aprobado</strong>
+                          {hito1.aprobadoEn && <span className="text-xs text-emerald-300/80 ml-2">({new Date(hito1.aprobadoEn).toLocaleString()})</span>}
+                        </div>
+                      )}
+
+                      {/* Error bar */}
+                      {hito1Error && (
+                        <div className="rounded-lg border border-red-500/60 bg-red-950/30 p-3 text-sm text-red-100">
+                          {hito1Error}
+                        </div>
+                      )}
+
+                      {/* Botones contextuales */}
+                      <div className="flex gap-2 flex-wrap">
+                        <button
+                          onClick={handleEjecutarHito1}
+                          disabled={ejecutandoHito1 || aprobandoHito1}
+                          className="px-4 py-2 rounded bg-amber-brand text-slate-950 font-medium disabled:opacity-50"
+                        >
+                          {ejecutandoHito1 ? 'Ejecutando...' : resultado ? 'Re-ejecutar Hito 1' : 'Ejecutar Hito 1'}
+                        </button>
+                        {resultado && !aprobado && (
+                          <button
+                            onClick={handleAprobarHito1}
+                            disabled={aprobandoHito1 || ejecutandoHito1}
+                            className="px-4 py-2 rounded border border-emerald-500/60 text-emerald-100 disabled:opacity-50"
+                          >
+                            {aprobandoHito1 ? 'Aprobando...' : 'Aprobar Hito 1'}
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Panel correctivo - semaforizado */}
+                      {resultado && (
+                        <div className={`rounded-lg border p-4 space-y-3 ${correctivoColor}`}>
+                          <div className="flex items-center justify-between">
+                            <h3 className="text-sm font-semibold text-slate-100 uppercase tracking-wide">Veredicto correctivo</h3>
+                            <span className="text-xs px-2 py-1 rounded bg-slate-900/60 text-slate-200">
+                              {resultado.correctivo.veredicto}
+                            </span>
+                          </div>
+                          <div className="grid gap-3 md:grid-cols-3 text-xs">
+                            {(['coherencia', 'falsabilidad', 'viabilidad_factual'] as const).map((dim) => {
+                              const d = resultado.correctivo.dimensiones[dim];
+                              return (
+                                <div key={dim} className="rounded border border-slate-700/60 bg-slate-900/40 p-2">
+                                  <div className="flex items-center justify-between mb-1">
+                                    <span className="text-slate-400 uppercase text-[10px] tracking-wider">{dim.replace('_', ' ')}</span>
+                                    <span className={d.pasa ? 'text-emerald-300' : 'text-red-300'}>{d.pasa ? '✓' : '✗'}</span>
+                                  </div>
+                                  <p className="text-slate-200 leading-snug">{d.justificacion}</p>
+                                </div>
+                              );
+                            })}
+                          </div>
+                          {resultado.correctivo.problemas_detectados.length > 0 && (
+                            <div>
+                              <p className="text-xs text-slate-400 uppercase tracking-wide mb-1">Problemas detectados</p>
+                              <ul className="list-disc pl-5 text-sm text-slate-200 space-y-1">
+                                {resultado.correctivo.problemas_detectados.map((p, i) => <li key={i}>{p}</li>)}
+                              </ul>
+                            </div>
+                          )}
+                          {resultado.correctivo.reformulacion_sugerida && (
+                            <div>
+                              <p className="text-xs text-slate-400 uppercase tracking-wide mb-1">Reformulacion sugerida</p>
+                              <p className="text-sm text-slate-100 italic">{resultado.correctivo.reformulacion_sugerida}</p>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Panel optimizadora - informativo azul */}
+                      {resultado && (
+                        <div className="rounded-lg border border-sky-500/40 bg-sky-950/20 p-4 space-y-3">
+                          <h3 className="text-sm font-semibold text-sky-100 uppercase tracking-wide">Sugerencia optimizadora (informativa)</h3>
+                          {resultado.optimizadora.existe_angulo_mejor && resultado.optimizadora.angulo_sugerido ? (
+                            <>
+                              <div>
+                                <p className="text-xs text-sky-300 uppercase tracking-wide mb-1">Angulo sugerido</p>
+                                <p className="text-sm text-slate-100">{resultado.optimizadora.angulo_sugerido}</p>
+                              </div>
+                              <div>
+                                <p className="text-xs text-sky-300 uppercase tracking-wide mb-1">Justificacion</p>
+                                <p className="text-sm text-slate-200">{resultado.optimizadora.justificacion}</p>
+                              </div>
+                              {resultado.optimizadora.trade_offs.length > 0 && (
+                                <div>
+                                  <p className="text-xs text-sky-300 uppercase tracking-wide mb-1">Trade-offs</p>
+                                  <ul className="list-disc pl-5 text-sm text-slate-200 space-y-1">
+                                    {resultado.optimizadora.trade_offs.map((t, i) => <li key={i}>{t}</li>)}
+                                  </ul>
+                                </div>
+                              )}
+                            </>
+                          ) : (
+                            <p className="text-sm text-slate-300">
+                              El modelo no detecto un angulo adyacente con mas potencia. La hipotesis actual esta bien enfocada.
+                            </p>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Resumen */}
+                      {resultado && (
+                        <div className="rounded-lg border border-slate-700 bg-slate-900/40 p-3 text-sm text-slate-200">
+                          <p className="text-xs text-slate-400 uppercase tracking-wide mb-1">Resumen</p>
+                          <p>{resultado.resumen}</p>
+                        </div>
+                      )}
+
+                      {/* Historial colapsable */}
+                      {hito1.historial.length > 0 && (
+                        <div className="rounded-lg border border-slate-700 bg-slate-900/40 p-3 text-xs">
+                          <button
+                            onClick={() => setVerHistorialHito1((v) => !v)}
+                            className="text-slate-300 hover:text-slate-100"
+                          >
+                            {verHistorialHito1 ? '▼' : '▶'} Historial ({hito1.historial.length} revisiones previas)
+                          </button>
+                          {verHistorialHito1 && (
+                            <ul className="mt-2 space-y-2">
+                              {[...hito1.historial].reverse().map((h, i) => (
+                                <li key={i} className="border border-slate-700/60 rounded p-2">
+                                  <div className="flex justify-between text-slate-400 text-[10px]">
+                                    <span>{new Date(h.ejecutadoEn).toLocaleString()}</span>
+                                    <span>{h.correctivo.veredicto}</span>
+                                  </div>
+                                  <p className="text-slate-300 mt-1">{h.resumen}</p>
+                                </li>
+                              ))}
+                            </ul>
                           )}
                         </div>
                       )}
