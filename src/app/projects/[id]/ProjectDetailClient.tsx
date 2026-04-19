@@ -13,7 +13,7 @@
  *   - Retrocompat: data.angulos y data.validacion_tono legacy se siguen leyendo (solo-read)
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 
 // ══════════════════════════════════════════════════════
@@ -303,12 +303,50 @@ interface Gate1aExportacionEvent {
   gate1aVeredictoGlobal: 'sano' | 'requiere_correccion';
 }
 
+/**
+ * Chunk 31I-3: shape del evento de importacion registrado en backend.
+ * Debe mantenerse en sync con Gate1aCorreccionEvent declarado local en
+ * src/app/api/projects/[id]/import-gate1a-correccion/route.ts. Si cambia
+ * la shape, actualizar ambos lugares simultaneamente.
+ */
+type Gate1aCorreccionVeredictoFinal =
+  | 'confirmado'
+  | 'corregido'
+  | 'descartado'
+  | 'no_resuelto';
+
+interface Gate1aCorreccionSupuesto {
+  id: string;
+  veredictoFinal: Gate1aCorreccionVeredictoFinal;
+  textoCorregido: string | null;
+  justificacion: string | null;
+  fuentes: string[];
+}
+
+interface Gate1aCorreccionEvent {
+  id: string;
+  importadoEn: string;
+  formatoOrigen: 'md' | 'docx';
+  nombreArchivo: string;
+  enunciadoCorregido: {
+    titulo: string | null;
+    tesis: string | null;
+  };
+  supuestos: Gate1aCorreccionSupuesto[];
+  fuentesGlobales: string[];
+  notaEditorial: string | null;
+  aplicado: boolean;
+  aplicadoEn: string | null;
+  warnings: string[];
+}
+
 interface Gate1aData {
   estado: Gate1aEstado;
   ultimoResultado: Gate1aResultado | null;
   aprobadoEn: string | null;
   historial: Gate1aResultado[];
-  exportaciones?: Gate1aExportacionEvent[]; // Chunk 31I — opcional para retrocompat
+  exportaciones?: Gate1aExportacionEvent[]; // Chunk 31I-1 — opcional para retrocompat
+  correcciones?: Gate1aCorreccionEvent[]; // Chunk 31I-3 — opcional para retrocompat
 }
 
 // Chunk 31D-2: Hito 1 - Validacion de hipotesis elegida (fase hito_1)
@@ -1038,6 +1076,9 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
   const [gate1aEditandoEnunciado, setGate1aEditandoEnunciado] = useState(false);
   // Chunk 31I-2: estado del exportador de supuestos del Gate 1a
   const [exportandoGate1a, setExportandoGate1a] = useState(false);
+  // Chunk 31I-3: estado del importador de correcciones del Gate 1a
+  const [importandoGate1a, setImportandoGate1a] = useState(false);
+  const importGate1aInputRef = useRef<HTMLInputElement | null>(null);
   const [gate1aEditTitle, setGate1aEditTitle] = useState('');
   const [gate1aEditThesis, setGate1aEditThesis] = useState('');
   const [gate1aGuardandoEnunciado, setGate1aGuardandoEnunciado] = useState(false);
@@ -1561,6 +1602,78 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
       alert('Error de red exportando el Gate 1a. Revisa tu conexion y reintentalo.');
     } finally {
       setExportandoGate1a(false);
+    }
+  }
+
+  // ── Chunk 31I-3: Gate 1a — importar correccion externa (.md o .docx) ──
+  // Consume POST /api/projects/[id]/import-gate1a-correccion. El archivo
+  // se parsea server-side, se valida contra los supuestos del ultimo
+  // export y se persiste en data.gate_1a.correcciones[]. Scope del 31I-3:
+  // solo persistencia del buffer. La aplicacion efectiva a title/thesis
+  // queda para un Chunk 31J futuro.
+  async function handleImportarGate1aCorreccion(file: File) {
+    if (!project || importandoGate1a) return;
+
+    setImportandoGate1a(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const res = await fetch(
+        `/api/projects/${project.id}/import-gate1a-correccion`,
+        { method: 'POST', body: formData },
+      );
+
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        const code = (json as { code?: string }).code ?? '';
+        const errorText = (json as { error?: string }).error ?? `Error ${res.status}`;
+        const mensajes: Record<string, string> = {
+          PROJECT_NOT_FOUND: 'El proyecto no existe o fue eliminado.',
+          NO_EXPORT_PRIOR: 'Debes exportar supuestos antes de importar una correccion.',
+          PHASE_LOCKED: 'El enunciado esta congelado en esta fase.',
+          NO_FILE: 'No se adjunto ningun archivo.',
+          INVALID_FORMAT: 'Formato no soportado. Usa .md o .docx.',
+          FILE_TOO_LARGE: 'Archivo mayor a 2MB.',
+          EMPTY_CORRECCION: 'El archivo no contiene correcciones parseables.',
+          PARSE_FAILED: 'Error al parsear el archivo. Revisa formato.',
+          PERSIST_FAILED: 'El parseo funciono pero no se pudo persistir. Reintenta.',
+        };
+        const mensaje = mensajes[code] ?? errorText;
+        alert(`Importacion fallida: ${mensaje}`);
+        return;
+      }
+
+      const correccion = (json as { correccion?: Gate1aCorreccionEvent }).correccion;
+      const warnings = (json as { warnings?: string[] }).warnings ?? [];
+
+      if (correccion) {
+        const resueltos = correccion.supuestos.filter(
+          (s) => s.veredictoFinal !== 'no_resuelto',
+        ).length;
+        const enunciadoEstado =
+          correccion.enunciadoCorregido.titulo || correccion.enunciadoCorregido.tesis
+            ? 'corregido'
+            : 'sin cambios';
+        const wSuffix =
+          warnings.length > 0 ? ` ${warnings.length} warning(s).` : '';
+        alert(
+          `Correccion importada: ${resueltos} supuesto(s) resuelto(s), enunciado ${enunciadoEstado}.${wSuffix}`,
+        );
+      } else {
+        alert('Correccion importada.');
+      }
+
+      await fetchProject();
+    } catch (error) {
+      console.error('[handleImportarGate1aCorreccion] error inesperado:', error);
+      alert('Error de red importando la correccion. Revisa tu conexion y reintentalo.');
+    } finally {
+      setImportandoGate1a(false);
+      if (importGate1aInputRef.current) {
+        importGate1aInputRef.current.value = '';
+      }
     }
   }
 
@@ -4046,6 +4159,30 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                               </button>
                             );
                           })()}
+                          {/* Chunk 31I-3: importar correccion externa (.md o .docx) */}
+                          {(gate1a?.exportaciones?.length ?? 0) > 0 && (
+                            <>
+                              <input
+                                ref={importGate1aInputRef}
+                                type="file"
+                                accept=".md,.docx,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                                className="hidden"
+                                onChange={(e) => {
+                                  const f = e.target.files?.[0];
+                                  if (f) void handleImportarGate1aCorreccion(f);
+                                }}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => importGate1aInputRef.current?.click()}
+                                disabled={importandoGate1a}
+                                className="bg-emerald-600 text-white px-4 py-2 rounded hover:bg-emerald-700 disabled:bg-gray-400"
+                                title="Importa un expediente .md o .docx con la correccion producida por un motor externo (por ejemplo Sala de Redaccion)"
+                              >
+                                {importandoGate1a ? 'Importando...' : 'Importar correccion externa'}
+                              </button>
+                            </>
+                          )}
                         </div>
                       )}
 
