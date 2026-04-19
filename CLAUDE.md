@@ -2246,11 +2246,12 @@ pipeline.
 | 31A | Eliminacion seccion Herramientas de Produccion del dashboard | Codigo | Ninguna. CERRADO (e631a2c). |
 | 31B | Mapa canonico del pipeline IP y diagnostico arquitectonico | Documental | Ninguna. Este bloque. |
 | 31C | Gate 1a: sanity check de supuestos factuales | Codigo | 31B (requiere mapa canonico como contrato). |
-| 31D | Hito 1: validacion de hipotesis elegida | Codigo | 31C (Gate 1a debe existir primero; 31D introduce estado hito_1 en pipelineStatus). Sesion nueva. |
+| 31D | Hito 1: validacion de hipotesis elegida | Codigo | CERRADO. 31D-1 (04c4dd9), 31D-2 (82de623), 31D-3 (este commit). Validado E2E con IP-2026-0005. |
 | 31E | Verificaciones criticas como sistema real | Codigo | 31D (verificaciones se apoyan en hipotesis ya validada). |
 | 31F | Separacion forense/editorial en prompts | Codigo | 31D (requiere estados del pipeline estabilizados). |
 | 31G | Importador de borrador IP externo | Codigo | Candidato, no compromiso. Depende de decision futura sobre puenteo con Sala de Redaccion. |
 | 31H | Cierre documental del Chunk 31 | Documental | Todos los anteriores. |
+| 31I | Exportador de enunciado para correccion externa | Candidato | Abierto por hallazgo del expediente ARICA-100-VF-2026-0001 en sesion del 31D. |
 
 #### Decisiones arquitectonicas registradas — Chunk 31
 
@@ -2405,4 +2406,352 @@ recuperable sin retroceso del pipeline.
 en fase draft. Ediciones atomicas: si alteran el enunciado y existe
 data.gate_1a, el backend archiva ultimoResultado en historial y
 resetea estado a 'pendiente' en el mismo PATCH.
+
+#### Estado del pipeline con Chunk 31D cerrado (18 abril 2026)
+
+El Chunk 31D (Hito 1 — Validacion de hipotesis elegida) cerro en tres
+sub-chunks ejecutados en una sola sesion larga:
+
+- **31D-1** `04c4dd9` feat(chunk31d-1): Hito 1 backend — estado pipeline,
+  gates, prompt y tool registry. Cinco archivos tocados: schema.ts (enum
+  projects.status +hito_1), init-sql.ts (CHECK inline +hito_1 + bloque
+  idempotente ALTER CONSTRAINT al final), api/projects/[id]/route.ts
+  (PIPELINE_ORDER +hito_1 entre validacion y pesquisa, IP_PHASES +hito_1,
+  dos hard gates nuevos HIPOTESIS_ELEGIDA_REQUIRED y HITO_1_REQUIRED,
+  auto-reset atomico de data.hito_1 cuando cambia hipotesis_elegida),
+  lib/ai/prompts.ts (buildHito1Prompt, ToolName +hito_1, registries IP+MP),
+  api/ai/generate/route.ts (VALID_TOOLS +hito_1). +194/-3 netas.
+
+- **31D-2** `82de623` feat(chunk31d-2): Hito 1 frontend — tab, handlers,
+  codigos de error y retiro soft gate 9C. Un solo archivo:
+  ProjectDetailClient.tsx. Extension del ActiveTool union, 7 interfaces
+  TypeScript para Hito1 (Hito1Correctivo, Hito1Optimizadora, Hito1Resultado,
+  Hito1Data, types auxiliares), entrada PHASE_CONFIG.hito_1 con tab unica,
+  4 estados React (ejecutando/aprobando/error/verHistorial), handlers
+  handleEjecutarHito1 y handleAprobarHito1, eliminacion del bloque soft
+  gate 9C con comentario audit trail, dos codigos nuevos en el if-chain
+  de handlePipelineAction (HIPOTESIS_ELEGIDA_REQUIRED redirige a tab
+  hipotesis, HITO_1_REQUIRED redirige a tab hito_1), render completo del
+  tab con dos paneles visualmente distintos (correctivo semaforizado
+  verde/amber/rojo segun veredicto, optimizadora azul informativa),
+  historial colapsable de revisiones previas. +377/-12 netas.
+
+- **31D-3** [DOCUMENTAL] Este bloque. Cierre documental del Chunk 31D
+  completo incluyendo decisiones arquitectonicas, patrones nuevos,
+  validacion empirica y hallazgos emergentes.
+
+#### Decisiones arquitectonicas del Chunk 31D
+
+**D1 — Estado hito_1 entre validacion y pesquisa.** Insertado con valor
+literal 'hito_1' en PIPELINE_ORDER, IP_PHASES, enum Drizzle de
+projects.status, CHECK constraint de la columna en Postgres. El nombre
+del campo persistido tambien es data.hito_1 por paralelismo exacto con
+data.gate_1a (Chunk 31C), data.borrador (Chunk 8), data.borrador_ip
+(Chunk 18). El nombre del estado es el nombre del campo, convencion
+consistente.
+
+**D2 — UI de una sola tab con dos paneles visualmente separados.** No
+dos tabs, no dos componentes. Una tab unica con dos paneles renderizados
+secuencialmente: Correctivo arriba (semaforizado), Optimizadora abajo
+(azul fijo). La jerarquia semantica del 31B (correctivo bloquea,
+optimizadora informa) se traduce a jerarquia visual consistente. Precedente
+del Chunk 31C-2 (Gate 1a con una sola tab aunque muestra multiples
+supuestos). Mezclar los dos criterios en un solo panel diluiria el diseño.
+
+**D3 — Aprobacion directa sin confirm cuando veredicto correctivo es
+'coherente'.** Si las tres dimensiones (coherencia, falsabilidad, viabilidad
+factual) pasan, la aprobacion es directa. Si una o dos fallan
+('requiere_reformulacion') o todas fallan ('inviable'), se dispara un
+confirm() del navegador citando el veredicto literal para firma explicita
+de asuncion de riesgo. Patron simetrico al Gate 1a del 31C-2.
+
+**D4 — Auto-reset atomico de data.hito_1 al cambiar hipotesis_elegida.**
+Cuando el body.data del PATCH contiene la key 'hipotesis_elegida' (cualquier
+valor incluido null via handleCambiarEleccion), el backend archiva
+data.hito_1.ultimoResultado en data.hito_1.historial[] y resetea
+data.hito_1.estado a 'pendiente' en el mismo PATCH atomico. Simetrico
+con el auto-reset del gate_1a del Chunk 31C-2 (reaccionando a cambios
+en title/thesis). Patron arquitectonico consolidado: auto-reset atomico
+en PATCH como respuesta generica al problema "cuando el campo A cambia,
+el campo derivado B debe invalidarse".
+
+**D5 — Hard gates nuevos reemplazan soft gate 9C.** Dos hard gates en
+backend (HIPOTESIS_ELEGIDA_REQUIRED en validacion→hito_1,
+HITO_1_REQUIRED en hito_1→pesquisa) son superiores operativa y
+arquitectonicamente al soft gate 9C (confirm frontend en
+validacion→pesquisa). Razones: (a) los hard gates operan a nivel backend
+con codigo de error explicito y mensaje accionable, (b) el frontend se
+limita a mostrar alert + redirigir al tab apropiado (setActiveTool),
+(c) no hay doble barrera confusa, (d) cualquier cliente (UI actual,
+cliente externo, curl) obtiene el mismo bloqueo. Ver "Revision formal
+de la decision U3 del Chunk 31C" mas abajo.
+
+**D6 — Gates hard con redireccion a tab especifica.** HIPOTESIS_ELEGIDA_REQUIRED
+redirige via setActiveTool('hipotesis') porque la accion correctiva
+(elegir hipotesis) esta en una tab anterior a la actual. HITO_1_REQUIRED
+redirige a setActiveTool('hito_1') porque la accion correctiva (ejecutar
+y aprobar Hito 1) esta en la tab actual. Patron: el gate redirige donde
+esta la accion que desbloquea, no donde disparo el error.
+
+**D7 — Separacion conceptual: fases que dependen del modelo vs fases
+que dependen del operador.** El Gate 1a y el Hito 1 operan sobre
+conocimiento de entrenamiento de Claude Sonnet 4 (corte ~abril 2025).
+Ambos evaluan FORMA (coherencia del enunciado, estructura epistemologica
+de la hipotesis), no CONTENIDO FACTUAL actualizado. Las fases que
+dependen de contenido factual actualizado (ODF, Borrador IP en modo
+evidencia disponible, Borrador MP, Validador IP) consumen data.fuentes[]
+poblada por el operador con trabajo editorial externo. La plataforma
+asiste en cada paso pero no sustituye la responsabilidad editorial del
+operador. Consistente con el principio "asiste, no automatiza" del
+Chunk 12E y con la conexion de cortes epistemicos del Chunk 25b.
+
+**D8 — Prompt del Hito 1 con dos criterios separados por diseño.** El
+system prompt del Hito 1 explicita que correctivo y optimizadora son
+capas ortogonales: el correctivo pregunta "esta hipotesis no deberia
+avanzar", el optimizador pregunta "esta hipotesis podria ser mejor".
+Mezclarlos degrada ambos. El prompt fuerza output JSON estricto con
+dos sub-objetos separados (correctivo + optimizadora) y un resumen
+que integra ambos sin mezclarlos. Validado empiricamente con el test
+2 del 31D-1 (Hospital Arica 100) y la ejecucion productiva de
+IP-2026-0005.
+
+#### Patron reutilizable registrado: ALTER CONSTRAINT en init-sql.ts
+
+Antes del 31D-1, el unico patron de modificacion de schema en init-sql.ts
+era ALTER TABLE ADD COLUMN IF NOT EXISTS (Chunk 28). El Chunk 31D-1
+introduce el patron de modificacion de CHECK constraints:
+
+    ALTER TABLE projects DROP CONSTRAINT IF EXISTS projects_status_check;
+    ALTER TABLE projects ADD CONSTRAINT projects_status_check
+      CHECK (status IN ( ... lista actualizada ... ));
+
+Caracteristicas:
+- Idempotente: re-ejecutar regenera exactamente la misma constraint.
+- Atomico: DROP + ADD en secuencia, sin ventana donde la tabla quede
+  sin la constraint en un deploy productivo.
+- Nombre canonico confirmado: 'projects_status_check' (convencion
+  estandar de Postgres aplicada a la columna 'status' de la tabla
+  'projects'). Verificado pre-deploy en Railway via SELECT a
+  pg_constraint.
+- Sin bloque DO $$ dinamico porque el nombre es conocido y estable.
+
+Uso esperado en chunks futuros: cualquier modificacion del enum de
+status (agregar estados nuevos, deprecar estados existentes) o de
+cualquier otra columna con CHECK de valores enumerados sigue este
+patron.
+
+Verificacion del nombre antes de usar el patron: si la tabla/columna
+nunca se modifico, el nombre convencional aplica. Si hay dudas, query
+diagnostica:
+
+    SELECT conname, pg_get_constraintdef(oid)
+    FROM pg_constraint
+    WHERE conrelid = '<tabla>'::regclass
+      AND contype = 'c';
+
+#### Revision formal de la decision U3 del Chunk 31C
+
+La decision U3 del 31C (registrada en la seccion "Decisiones arquitectonicas
+cerradas durante la implementacion del Chunk 31C") establecio que el soft
+gate 9C (confirm frontend al avanzar validacion→pesquisa sin hipotesis
+elegida) quedaba intacto y seria reemplazado en el Chunk 31D por un hard
+gate formal. Esa revision fue ejecutada en el 31D-2 edicion 6a:
+
+- Eliminado: el bloque de 11 lineas en handlePipelineAction (aprox
+  lineas 1149-1159 pre-31D-2) que disparaba un confirm() con el texto
+  "No elegiste ninguna hipotesis. La fase Pesquisa funciona mejor con
+  una hipotesis ancla. ¿Avanzar igual?".
+- Reemplazado por: comentario audit trail de 3 lineas citando el hard
+  gate del backend como sustituto.
+- El hard gate HIPOTESIS_ELEGIDA_REQUIRED del 31D-1 opera en la
+  transicion validacion→hito_1 (nueva, post-31D) en lugar de
+  validacion→pesquisa (la anterior, pre-31D).
+
+Validado empiricamente en IP-2026-0005: al hacer click Avanzar desde
+fase validacion sin hipotesis elegida, aparece alert con mensaje del
+hard gate y la tab activa cambia a Generador de Hipotesis. NO aparece
+el confirm viejo. El retiro del 9C se comporta como fue diseñado.
+
+La decision U3 queda marcada como REVISADA EN 31D-2. Ninguna accion
+pendiente.
+
+#### Validacion end-to-end empirica con IP-2026-0005
+
+Durante la sesion del 18 abril 2026, el Chunk 31D completo (31D-1 + 31D-2)
+fue validado end-to-end con un proyecto real creado especificamente
+para ese fin: IP-2026-0005 "COMISION PRESIDENCIAL ARICA 100". Los seis
+hitos del pipeline canonico IP fueron ejercitados visualmente:
+
+- **Hito A — Creacion en draft**: OK. Pipeline bar renderiza el cuadrito
+  'hito_1' entre Validacion y Pesquisa, confirmando que el PIPELINE_ORDER
+  nuevo del 31D-1 se propaga correctamente al frontend via el campo
+  pipelinePhases del GET /api/projects/[id].
+- **Hito B — Gate 1a (31C)**: OK. Veredicto 'requiere_correccion' sobre
+  dos supuestos dudosos (denominacion, estatus politica de Estado).
+  Aprobado con confirm de riesgo. Gate 1a del 31C no presenta regresiones.
+- **Hito C — Hard gate HIPOTESIS_ELEGIDA_REQUIRED + retiro 9C**: OK.
+  Alert con mensaje del hard gate, redireccion a tab hipotesis, NO
+  aparicion del confirm viejo 9C. Validacion empirica del diseño D5/D6.
+- **Hito D — Generacion + eleccion + transicion a hito_1**: OK. La tab
+  "Hito 1 - Validacion de Hipotesis" se activa automaticamente, panel
+  introductorio visible, botones contextuales operativos.
+- **Hito E — Ejecucion Hito 1**: OK. Veredicto correctivo 'coherente'
+  (tres dimensiones en verde), optimizadora informando 'existe_angulo_mejor:
+  false'. Render semaforizado verde del panel correctivo. Render azul
+  de la optimizadora. Parser JSON limpio (parseError null). Validacion
+  empirica del diseño D2/D8.
+- **Hito F — Aprobacion + transicion a pesquisa**: OK. Aprobacion directa
+  sin confirm (veredicto coherente). Transicion limpia a fase pesquisa.
+  Tab activa cambia a Organizador de Fuentes. Hard gate HITO_1_REQUIRED
+  satisfecho implicitamente.
+
+Caminos no ejercitados explicitamente pero cubiertos por simetria logica
+del codigo:
+- Path 3 (confirm de asuncion de riesgo con veredicto no-coherente): la
+  rama de codigo `if (veredicto !== 'coherente') confirm(...)` es
+  simetrica con el Gate 1a y fue validada en aquel. La invocacion en el
+  Hito 1 sigue el mismo patron.
+- Path 4 (auto-reset atomico al cambiar hipotesis elegida): el bloque
+  de 31D-1 Edicion 3d fue validado en los curls iniciales de la sesion
+  via comparacion de estado pre/post. Simetria exacta con el auto-reset
+  del gate_1a del 31C-2.
+- Path 4-bis (hard gate HITO_1_REQUIRED desde UI): la estructura de
+  codigo en route.ts y en handlePipelineAction es simetrica con
+  HIPOTESIS_ELEGIDA_REQUIRED. Misma logica, mismo patron de alert +
+  setActiveTool.
+
+El proyecto IP-2026-0005 queda persistido en Railway como registro
+del primer caso productivo que ejercito el pipeline canonico del 31D.
+
+#### Hallazgo operativo: caracter \n invisible en ADMIN_TOKEN
+
+Durante la sesion del 18 abril 2026, al intentar ejecutar POST
+/api/admin/init con el nuevo ADMIN_TOKEN rotado (proceso disparado
+por exposicion accidental del token viejo en canal de chat con el
+asistente arquitecto), el endpoint devolvia persistentemente
+{"error":"Unauthorized"} aunque el token tipeado era el correcto.
+
+Diagnostico final: el token guardado en Vercel Environment Variables
+contenia un caracter \n (newline) al final, introducido por un paste
+desde la salida de un comando tipo `openssl rand -hex 32` o
+`cat /dev/urandom | head -c 40` que incluye newline implicito. Vercel
+detecto la anomalia y mostro el warning "This value starts and ends
+with whitespace and has return characters." en la UI de edicion.
+
+El endpoint comparaba el token de la URL (limpio) contra process.env.
+ADMIN_TOKEN (con '\n' al final) y nunca matcheaba. Al eliminar el
+Enter final del campo Value en Vercel, guardar, y esperar redeploy
+automatico, el endpoint respondio success.
+
+Aprendizaje operativo registrado para futuras rotaciones de secretos:
+
+1. Cuando se genera un token con herramientas Unix que emiten salida
+   con newline implicito (la mayoria), evitar seleccion por "toda la
+   linea" — seleccionar solo los caracteres del token.
+2. Vercel muestra warning visible cuando detecta whitespace anomalo
+   en el valor guardado. El warning es informativo, no bloqueante, pero
+   debe ser atendido antes de considerar el secret como "bien guardado".
+3. Cuando un endpoint protegido por token devuelve Unauthorized
+   persistentemente con lo que parece ser el token correcto, inspeccionar
+   el campo Value en Vercel buscando whitespace invisible antes de
+   asumir un bug del endpoint.
+
+#### Hallazgo emergente: loop Gate 1a → motor externo → correccion de enunciado
+
+Durante la validacion empirica con IP-2026-0005, el operador construyo
+fuera de la plataforma (usando su ecosistema de agentes con web search
+activo) un expediente de verificacion forense formal:
+
+    EXPEDIENTE_ARICA_100_VF-2026-0001.docx
+    Titulo: "EXPEDIENTE DE VERIFICACION FORENSE"
+    Fecha: 18 abril 2026
+    Agente ejecutor: verificador-forense (Sala de Investigacion y Redaccion)
+
+El expediente resuelve con precision documental los dos supuestos que
+el Gate 1a del 31C habia flaggeado como 'dudoso':
+
+- Supuesto 1 (denominacion): VEREDICTO INCORRECTO. La denominacion
+  correcta es "Comision Asesora Presidencial para la conmemoracion del
+  centenario del Tratado de Lima", no "Comision Presidencial Arica 100".
+  La palabra "Asesora" no es decorativa — define la naturaleza juridica
+  como organo consultivo, no ejecutivo.
+- Supuesto 2 (politica de Estado): VEREDICTO PARCIALMENTE CORRECTO. El
+  Presidente Boric califico el informe como "politica de Estado" en
+  declaracion publica, pero no existe instrumento juridico vinculante
+  que formalice esa designacion. La expresion fue aspiracional, no
+  juridico-formal.
+
+El expediente incluye redaccion sugerida del enunciado corregida,
+clasificacion de confianza porcentual de cada hallazgo, 13 fuentes
+especificas nombradas con sus fechas de publicacion, y un dictamen
+accionable.
+
+**Lo que este hallazgo revela**: existe un loop operativo valioso que
+el pipeline IPMP actual no formaliza:
+
+    Crear proyecto → Gate 1a flaggea supuestos dudosos →
+      → Operador exporta enunciado a motor externo con search →
+      → Vuelve con expediente de correccion del enunciado →
+      → Edita enunciado en IPMP (dispara auto-reset atomico 31C-2) →
+      → Re-ejecuta Gate 1a → ahora pasa 'sano' →
+      → Continua pipeline con enunciado editorialmente validado
+
+El Chunk 12B creo un exportador de pesquisa externa pero analogo no
+existe para la etapa de correccion de enunciado. El Gate 1a sabe detectar
+dudosos pero no puede resolverlos (no tiene web search). El loop queda
+hoy en el operador, sin soporte formal de la plataforma.
+
+**Candidato a Chunk 31I — Exportador de enunciado para correccion
+externa.** Deuda arquitectonica documentada formalmente. No es parte
+del alcance del Chunk 31D. Abre material para el roadmap de sub-chunks
+futuros.
+
+El expediente EXPEDIENTE_ARICA_100_VF-2026-0001.docx queda anclado
+como el primer caso real documentado del loop Gate 1a ↔ motor externo,
+insumo editorial para el diseño eventual del 31I.
+
+#### Contratos nuevos del backend registrados en el Chunk 31D
+
+**Tool 'hito_1' en /api/ai/generate.** Acepta userMessage con formato
+'TITULO: <str>\nTESIS: <str o "(no declarada)">\nHIPOTESIS ELEGIDA:\n
+<serializacion>'. Devuelve en result:
+`{ correctivo: Hito1Correctivo, optimizadora: Hito1Optimizadora,
+resumen: string }`. Hito1Correctivo tiene:
+`{ veredicto: 'coherente'|'requiere_reformulacion'|'inviable',
+dimensiones: { coherencia, falsabilidad, viabilidad_factual }
+(cada una con pasa: boolean, justificacion: string),
+problemas_detectados: string[], reformulacion_sugerida: string | null }`.
+Hito1Optimizadora tiene:
+`{ existe_angulo_mejor: boolean, angulo_sugerido: string | null,
+justificacion: string, trade_offs: string[] }`. Loguea consumo contra
+el tenant 'investigapress'. Costo tipico: ~USD 0.015 por invocacion
+(Sonnet 4, ~1800 input + ~600 output tokens). Latencia tipica: 10-15
+segundos.
+
+**Campo data.hito_1 en projects.** Shape persistida:
+`{ estado: 'pendiente' | 'en_revision' | 'aprobado',
+ultimoResultado: Hito1Resultado | null, aprobadoEn: ISO string | null,
+historial: Hito1Resultado[] }`. Hito1Resultado incluye hipotesis_evaluada:
+HipotesisElegida como snapshot completo para trazabilidad.
+
+**Code HIPOTESIS_ELEGIDA_REQUIRED en PATCH /api/projects/[id].** Devuelto
+con status 400 cuando body.action === 'advance' y project.status ===
+'validacion' y data.hipotesis_elegida no existe o no es objeto. El
+cliente debe mostrar alert con json.error y ejecutar setActiveTool
+('hipotesis') para redirigir al generador.
+
+**Code HITO_1_REQUIRED en PATCH /api/projects/[id].** Devuelto con
+status 400 cuando body.action === 'advance' y project.status ===
+'hito_1' y data.hito_1.estado !== 'aprobado'. El cliente debe mostrar
+alert con json.error y ejecutar setActiveTool('hito_1') para redirigir
+al tab correspondiente.
+
+**Auto-reset atomico de data.hito_1 en PATCH /api/projects/[id].** Se
+dispara cuando el body.data contiene la key 'hipotesis_elegida' (cualquier
+valor, incluido null). Archiva data.hito_1.ultimoResultado en
+data.hito_1.historial[] y resetea data.hito_1.estado a 'pendiente',
+data.hito_1.aprobadoEn a null, data.hito_1.ultimoResultado a null.
+Operacion atomica en el mismo PATCH. Convive con el auto-reset del
+gate_1a del 31C-2 — ambos bloques operan sobre updates.data tomando el
+ultimo valor merged, orden seguro.
 
