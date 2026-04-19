@@ -1218,16 +1218,9 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
     // Chunk 31D-2: Soft gate 9C eliminado. Reemplazado por hard gate
     // HIPOTESIS_ELEGIDA_REQUIRED del backend (Chunk 31D-1) que opera
     // en la transicion validacion -> hito_1.
-    if (action === 'advance' && project.status === 'pesquisa') {
-      const dataObj = (project.data ?? {}) as Record<string, unknown>;
-      const fuentes = (dataObj.fuentes as unknown[] | undefined) ?? [];
-      if (fuentes.length === 0) {
-        const ok = confirm(
-          'No hay fuentes registradas en el ODF. El borrador va a quedar muy escueto y con muchas advertencias [VERIFICAR]. ¿Avanzar igual?'
-        );
-        if (!ok) return;
-      }
-    }
+    // Chunk 31L-2: soft gate de fuentes vacias eliminado. Reemplazado por
+    // hard gate FUENTES_REQUIRED del backend (Chunk 31L-1, commit 6bf052b) que
+    // opera en la transicion pesquisa -> produccion con codigo de error explicito.
     // Chunk 12C: soft gate de avance produccion -> revision con borrador desactualizado.
     if (action === 'advance' && project.status === 'produccion') {
       const dataObj = (project.data ?? {}) as Record<string, unknown>;
@@ -1279,6 +1272,11 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
         }
         if (json.code === 'BORRADOR_IP_REQUIRED') {
           alert(json.error);
+          return;
+        }
+        if (json.code === 'FUENTES_REQUIRED') {
+          alert(json.error);
+          setActiveTool('odf');
           return;
         }
         if (json.code === 'GATE_1A_REQUIRED') {
