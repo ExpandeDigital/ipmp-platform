@@ -422,7 +422,7 @@ const PHASE_ICONS: Record<string, string> = {
   exportado: '📤',
 };
 
-const IP_PHASES = ['draft', 'validacion', 'pesquisa'];
+const IP_PHASES = ['draft', 'validacion', 'hito_1', 'pesquisa'];
 
 const TIPO_LABELS: Record<string, string> = {
   noticia: '📰 Noticia',

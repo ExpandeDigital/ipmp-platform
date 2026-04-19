@@ -61,7 +61,7 @@ const STATUS_LABELS: Record<string, string> = {
   exportado: 'Exportado',
 };
 
-const INVESTIGAPRESS_STATUSES = ['draft', 'validacion', 'pesquisa'];
+const INVESTIGAPRESS_STATUSES = ['draft', 'validacion', 'hito_1', 'pesquisa'];
 const METRICPRESS_STATUSES = ['produccion', 'revision', 'aprobado', 'visual', 'exportado'];
 
 const STATUS_COLORS: Record<string, string> = {
