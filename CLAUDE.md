@@ -2755,3 +2755,271 @@ Operacion atomica en el mismo PATCH. Convive con el auto-reset del
 gate_1a del 31C-2 — ambos bloques operan sobre updates.data tomando el
 ultimo valor merged, orden seguro.
 
+### Chunk 31L — Hard gate FUENTES_REQUIRED + retiro soft gate frontend [COMPLETADO 19 abril 2026]
+
+El Chunk 31L cierra una brecha arquitectonica identificada empiricamente
+durante el test del Chunk 31I: el pipeline permitia avanzar de fase
+pesquisa a fase produccion con `data.fuentes.length === 0`, con la unica
+proteccion de un soft gate frontend (confirm del navegador) trivialmente
+bypasable. El caso SOBERANIA PERSONAL
+(`CODIGO-MAESTRO-SOBERANO-CO-2026-0001`), identificado retrospectivamente
+en la sesion del 19 abril como proyecto creado pre-31C que llego a estado
+`exportado` con una sola fuente de produccion propia, es exhibit
+empirico directo del impacto del bug. El 31L cierra esta brecha con un
+hard gate backend simetrico a los patrones consolidados del 18, 31C y
+31D.
+
+El chunk se ejecuto en dos sub-chunks de codigo + uno documental (este):
+
+- **31L-1** `6bf052b` feat(chunk31l-1): hard gate `FUENTES_REQUIRED`
+  backend. Un solo archivo tocado: `src/app/api/projects/[id]/route.ts`
+  (+21/-0 netas). Bloque insertado antes del bloque
+  `BORRADOR_IP_REQUIRED` del Chunk 18, anchor condicional
+  `if (nextStatus === 'produccion')` simetrico con los gates vecinos.
+  Lectura del estado via `((updates.data ?? project.data) ?? {})` para
+  permitir agregar fuente + avanzar en el mismo PATCH atomico (mismo
+  patron que `BORRADOR_IP_REQUIRED`). Guard defensivo
+  `Array.isArray(fuentes)` contra shape corrupta. Devuelve
+  `{ error: 'Necesitas al menos una fuente en el expediente (ODF) para
+  avanzar a Produccion.', code: 'FUENTES_REQUIRED', status: 400 }`.
+  Validado end-to-end en produccion con 5 curls (ver mas abajo).
+
+- **31L-2** `8751743` feat(chunk31l-2): retiro soft gate fuentes vacias
+  + manejo `FUENTES_REQUIRED` frontend. Un solo archivo tocado:
+  `src/app/projects/[id]/ProjectDetailClient.tsx` (+8/-10 netas,
+  balance -2 por consolidacion del comentario). Dos cambios: (a)
+  eliminacion del bloque soft gate en `handlePipelineAction` (lineas
+  1221-1230 pre-edit, `confirm()` con texto "No hay fuentes registradas
+  en el ODF..."), reemplazado por comentario audit trail de 3 lineas
+  citando el commit `6bf052b` del hard gate; (b) insercion del bloque
+  `if (json.code === 'FUENTES_REQUIRED') { alert(json.error);
+  setActiveTool('odf'); return; }` en el if-chain de
+  `handlePipelineAction`, inmediatamente despues de
+  `BORRADOR_IP_REQUIRED`. Patron simetrico con el retiro del soft gate
+  9C del Chunk 31D-2. Literal `'odf'` del `ActiveTool` union validado
+  por triangulacion (union de tipos linea 392, key de tab en
+  `PHASE_CONFIG.pesquisa` linea 583, discriminador de render linea
+  4583). Validacion visual en produccion confirmo que el confirm viejo
+  desaparecio y el hard gate bloquea desde el modal de traspaso.
+
+- **31L-3** [DOCUMENTAL] Este bloque. Cierre documental del Chunk 31L
+  completo incluyendo decisiones arquitectonicas, validacion empirica,
+  y hallazgos emergentes.
+
+#### Decisiones arquitectonicas del Chunk 31L
+
+**L1 — Umbral estricto `fuentes.length === 0`.** El hard gate bloquea
+solo cuando el array esta literalmente vacio. Alternativa considerada:
+umbral editorial mas fuerte por triangulacion (`fuentes.length < 3`
+basado en el criterio periodistico de triangulacion que aparece en el
+expediente VF2 del caso ARICA 100). La alternativa fue descartada para
+este chunk por dos razones: (a) migracion directa del soft gate
+pre-existente que usaba exactamente la misma condicion (`=== 0`),
+garantiza cero sorpresas para el operador, (b) el criterio editorial de
+triangulacion es decision legitima pero amerita sub-chunk propio con
+discusion editorial separada. Candidato registrado como 31N.
+
+**L2 — Orden del gate en la chain.** El hard gate se inserta antes de
+`BORRADOR_IP_REQUIRED` y `TRASPASO_REQUIRED` en la transicion pesquisa
+-> produccion. Justificacion: `FUENTES_REQUIRED` es la condicion mas
+basica de las tres (sin fuentes ni siquiera tiene sentido generar
+borrador IP ni hacer traspaso). El orden resultante de la chain en esa
+transicion es `FUENTES_REQUIRED` -> `BORRADOR_IP_REQUIRED` ->
+`TRASPASO_REQUIRED`, de menor a mayor sofisticacion operativa. Patron
+simetrico con el orden de precondiciones del resto del pipeline.
+
+**L3 — `setActiveTool('odf')` no redundante.** En el happy path, el
+tab ODF ya esta activo en fase `pesquisa` (es el primero de
+`PHASE_CONFIG.pesquisa.tabs`), entonces el `setActiveTool('odf')` del
+handler del codigo de error parece redundante. Se mantiene por dos
+razones: (a) el operador puede estar en otra tab de `pesquisa`
+(`borrador_ip`, `validador_ip`, `radar`, `pitch`) cuando clickea
+avanzar; el redirect lo trae al tab donde esta la accion correctiva,
+(b) consistencia con la decision D6 del Chunk 31D-2 ("el gate redirige
+donde esta la accion que desbloquea").
+
+**L4 — No unificar UX de `alert()` vs inline.** Durante la validacion
+visual del 31L-2 se detecto que el handler `handlePipelineAction` maneja
+errores con `alert()` del navegador, mientras que `handleTraspaso`
+(otro handler de avance, disparado desde el modal de traspaso) los
+maneja con render inline rojo via el estado `traspasoError`. La
+diferencia es arquitectonica: el modal tiene UI propia donde el render
+inline es mas natural, el resto del pipeline bar no. La unificacion del
+patron (migrar todos los codigos a render inline, que es
+experiencialmente superior) se deja como candidato a sub-chunk futuro,
+fuera de alcance del 31L para preservar disciplina "una sesion, un
+chunk". Registrado como DT-13.
+
+#### Validacion empirica del Chunk 31L con IP-2026-0005 (19 abril 2026)
+
+Durante la sesion del 19 abril 2026, el Chunk 31L completo fue validado
+end-to-end con un proyecto de prueba creado especificamente para ese
+fin: IP-2026-0005 "Test 31L-1 — Hard gate FUENTES_REQUIRED", UUID
+`54902eca-9a4c-43a3-8e5b-388164698ce2`. El proyecto se creo con un
+enunciado meta-descriptivo sobre el propio test tecnico, lo cual tuvo
+consecuencias empiricas interesantes (ver DT-10 mas abajo).
+
+Los seis hitos del pipeline canonico IP hasta `pesquisa` fueron
+ejercitados:
+
+**Hito A — Creacion en draft y Gate 1a (31C)**: OK. Gate 1a devolvio
+veredicto `requiere_correccion` con dos supuestos (uno falso por DT-10,
+uno dudoso). Aprobado asumiendo riesgo con confirm explicito. Validacion
+empirica de la decision D3 del Chunk 31D-2 aplicada al Gate 1a.
+
+**Hito B — Avance a validacion + Generador de Hipotesis**: OK.
+Avanzo sin disparar `GATE_1A_REQUIRED` (aprobado). El Generador devolvio
+3 hipotesis (no 5, decision editorial del modelo por tema abstracto), todas
+meta-reflexivas sobre la industria de medios. Se eligio la primera.
+
+**Hito C — Avance a hito_1 + Ejecucion Hito 1 (31D)**: OK. Avanzo sin
+disparar `HIPOTESIS_ELEGIDA_REQUIRED`. El Hito 1 devolvio veredicto
+correctivo `inviable` sobre las tres dimensiones (coherencia,
+falsabilidad, viabilidad factual), con sugerencia optimizadora
+declarando honestamente `existe_angulo_mejor: false`. Aprobado asumiendo
+riesgo con confirm.
+
+**Hito D — Avance a pesquisa via curl (validacion 31L-1 lado positivo
+con 1 fuente)**: OK. Tres curls secuenciales para llegar a `pesquisa`,
+uno para cargar una fuente de prueba al ODF, uno final de avance: HTTP
+400 con `code: 'BORRADOR_IP_REQUIRED'`. Validacion empirica de que el
+hard gate `FUENTES_REQUIRED` cede correctamente cuando
+`fuentes.length >= 1` y la chain sigue al gate siguiente.
+
+**Hito E — Validacion 31L-1 lado negativo con 0 fuentes**: OK. Un curl
+para vaciar `data.fuentes` explicitamente (`{"data":{"fuentes":[]}}`),
+un curl final de avance: HTTP 400 con `code: 'FUENTES_REQUIRED'`.
+Validacion empirica de que el hard gate bloquea cuando
+`fuentes.length === 0`. Mensaje literal del backend: "Necesitas al menos
+una fuente en el expediente (ODF) para avanzar a Produccion."
+
+**Hito F — Validacion visual del 31L-2 desde el modal de traspaso**:
+OK. El operador abrio el modal clickeando `Traspaso -> MetricPress`,
+selecciono tenant `MetricPress` y template `[RP] Reportaje en
+profundidad`, tildo el checkbox del soft gate 23C, y clickeo `Confirmar
+Traspaso y Avanzar`. Resultado: no aparecio confirm viejo, el error
+del hard gate `FUENTES_REQUIRED` se mostro como mensaje rojo inline
+debajo del boton del modal, sin bloquear la UI. Validacion empirica
+simultanea del retiro del soft gate y del manejo del codigo de error
+nuevo.
+
+El proyecto IP-2026-0005 queda persistido en Railway como registro del
+primer caso productivo que ejercito el Chunk 31L completo. El operador
+decidira en sesion posterior si continuar el proyecto hacia exportacion
+editorial, pivotar el enunciado a un tema investigable, o descartarlo.
+
+#### Contratos nuevos del backend registrados en el Chunk 31L
+
+**Code `FUENTES_REQUIRED` en `PATCH /api/projects/[id]`**. Devuelto con
+status 400 cuando `body.action === 'advance'`, el `nextStatus` calculado
+por `PIPELINE_ORDER` es `'produccion'`, y `data.fuentes.length === 0`
+(o `data.fuentes` no es array por shape corrupta). La condicion se
+evalua contra el estado merged `((updates.data ?? project.data) ?? {})`,
+permitiendo que un mismo PATCH agregue una fuente via `body.data.fuentes`
+y luego avance exitosamente. El cliente debe mostrar el error al
+operador y ejecutar `setActiveTool('odf')` para redirigir al Organizador
+de Fuentes. El cliente del modal de traspaso (handler `handleTraspaso`)
+muestra el error como render inline via estado `traspasoError` en lugar
+de `alert()`.
+
+Simetrico con `GATE_1A_REQUIRED` (Chunk 31C), `HIPOTESIS_ELEGIDA_REQUIRED`
+(Chunk 31D), `HITO_1_REQUIRED` (Chunk 31D), `BORRADOR_IP_REQUIRED`
+(Chunk 18), `TRASPASO_REQUIRED` (Chunk 18).
+
+#### Hallazgos emergentes del test E2E del Chunk 31L
+
+El test E2E del 31L produjo cinco hallazgos operativos que merecen
+registro formal. Todos son potenciales candidatos a sub-chunks futuros
+de higiene o de UX, ninguno bloqueante para la operacion actual.
+
+**DT-9 — Cabecera de proyecto muestra chip `⚙️ MetricPress` durante
+estado `hito_1`**. Observacion: al avanzar de fase `validacion` a fase
+`hito_1`, la cabecera del proyecto cambia el chip visual de
+`🔍 InvestigaPress` a `⚙️ MetricPress`. Al pasar a fase `pesquisa`, el
+chip vuelve correctamente a `🔍 InvestigaPress`. Diagnostico: regresion
+no detectada del Chunk 31D-1 que agrego el estado `hito_1` al pipeline
+sin actualizar el array de estados IP del derivador de fase
+(frontend o backend). Impacto: cosmetico. Fix candidato: agregar
+`'hito_1'` al array de estados IP del derivador correspondiente.
+Candidato a sub-chunk 31M.
+
+**DT-10 — Gate 1a produce falso positivo categoria "fecha" para fechas
+posteriores al cutoff del modelo**. Observacion: durante el test, el
+Gate 1a marco como `falso` el supuesto "creado el 19 de abril de 2026"
+con justificacion literal "La fecha 19 de abril de 2026 es posterior a
+mi corte de conocimiento y representa una fecha futura imposible". La
+fecha es la fecha real del dia de ejecucion. Diagnostico: el prompt
+`buildGate1aPrompt` no inyecta la fecha actual en el system prompt. El
+modelo audita fechas contra su cutoff de entrenamiento (~abril 2025
+para Sonnet 4), no contra la fecha de ejecucion. Este hallazgo confirma
+empiricamente la decision D7 del 31D ("los gates operan sobre
+conocimiento de entrenamiento, no sobre contenido factual actualizado")
+y es aplicacion directa de su principio. Fix candidato: inyectar la
+fecha actual al inicio del system prompt del Gate 1a con linea explicita
+tipo "La fecha actual es {YYYY-MM-DD}. Las fechas del enunciado
+posteriores a tu cutoff de entrenamiento pero anteriores o iguales a
+esta fecha SON fechas reales del presente, no fechas futuras
+imposibles". Candidato a sub-chunk 31M. Impacto: editorial (puede llevar
+al operador a reformular enunciados factualmente correctos).
+
+**DT-11 — Generador de Hipotesis sin confirm al regenerar puede
+duplicar resultados accidentalmente**. Observacion: durante el test, el
+operador clickeo accidentalmente `Generar Hipotesis` con una hipotesis
+ya elegida. El handler produjo 3 hipotesis nuevas sin validar estado
+previo. Resultado: dos tandas de generacion persistidas, una con
+hipotesis elegida activa, otra marcada como "descartada" sin accion
+editorial explicita. Diagnostico: el handler (estimado por patron)
+no valida si `data.hipotesis_elegida` existe antes de disparar la
+llamada a IA. Contrasta con el patron del Gate 1a que archiva al
+`historial[]` ante re-ejecucion. Fix candidato: confirm previo cuando
+`data.hipotesis_elegida` existe, texto sugerido "Ya elegiste una
+hipotesis. Generar nuevas va a archivar la actual. Continuar?". Patron
+simetrico al confirm del Gate 1a. Candidato a sub-chunk 31M. Impacto:
+friccion operativa baja, consumo de tokens innecesario.
+
+**DT-12 — Segundo `confirm()` de fuentes vacias en handler distinto**.
+Observacion: durante la implementacion del Chunk 31L-2, Claude Code
+detecto que existe un `confirm()` equivalente al retirado en la linea
+1873 de `ProjectDetailClient.tsx`, dentro de un handler distinto
+(probablemente relacionado con generacion de borrador IP del Chunk 8).
+Fuera de scope del 31L-2, no fue tocado. Pendiente de evaluacion:
+decidir si merece retiro analogo (convertirlo en hard gate backend) o
+tiene razon arquitectonica de existir como soft gate local a ese
+contexto.
+
+**DT-13 — UX divergente `alert()` vs inline en codigos de error del
+pipeline**. Observacion: durante la validacion visual del 31L-2, se
+detecto que `handlePipelineAction` maneja errores con `alert()` del
+navegador (intrusivo, bloqueante, requiere click extra), mientras que
+`handleTraspaso` los maneja con render inline rojo via estado
+`traspasoError` debajo del boton del modal (persistente, no bloqueante,
+sin click extra). El patron inline es experiencialmente superior.
+Fix candidato: unificar a render inline todos los codigos de error
+del pipeline bar, probablemente usando un componente `PipelineError`
+compartido. Superficie delicada por cantidad de codigos de error
+involucrados. Candidato a sub-chunk propio.
+
+#### Actualizacion del plan de sub-chunks del Chunk 31
+
+La tabla del sub-chunk 31B documentaba el plan original. Post-31L, la
+tabla actualizada es:
+
+| Sub-chunk | Nombre | Tipo | Estado |
+|-----------|--------|------|--------|
+| 31A | Eliminacion seccion Herramientas de Produccion del dashboard | Codigo | CERRADO (`e631a2c`). |
+| 31B | Mapa canonico del pipeline IP y diagnostico arquitectonico | Documental | CERRADO. |
+| 31C | Gate 1a: sanity check de supuestos factuales | Codigo | CERRADO. 31C-1 (`caccbb1`), 31C-2 (`7a21f00`), 31C-3 documental. |
+| 31D | Hito 1: validacion de hipotesis elegida | Codigo | CERRADO. 31D-1 (`04c4dd9`), 31D-2 (`82de623`), 31D-3 (`fa49388`) documental. |
+| 31I | Exportador de enunciado para correccion externa | Codigo | PARCIAL. 31I-1 (`e219e0b`), 31I-2 (`51236ce`). 31I-3 parser de vuelta y 31I-4 documental pendientes. |
+| 31L | Hard gate `FUENTES_REQUIRED` + retiro soft gate frontend | Codigo | CERRADO. 31L-1 (`6bf052b`), 31L-2 (`8751743`), 31L-3 (este commit). |
+| 31M | Higiene post-31L: DT-9 + DT-10 + DT-11 | Codigo | Candidato. Tres fixes pequenos consolidables en una sesion corta. |
+| 31N | Soft warning triangulacion `fuentes.length < 3` | Codigo | Candidato. |
+| 31E | Verificaciones criticas como sistema real | Codigo | Pendiente. |
+| 31F | Separacion forense/editorial en prompts | Codigo | Pendiente. |
+| 31G | Importador de borrador IP externo | Codigo | Candidato, no compromiso. |
+| 31H | Cierre documental del Chunk 31 entero | Documental | Todos los anteriores. |
+
+Sub-chunk adicional implicito candidato: unificacion de UX de errores
+del pipeline (migracion de `alert()` a render inline, DT-13). Fuera de
+la nomenclatura del Chunk 31 por ser mejora de UX transversal; podria
+ir en un Chunk 32 de higiene UX.
