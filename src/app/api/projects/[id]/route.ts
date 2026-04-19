@@ -462,6 +462,27 @@ export async function PATCH(
           }
         }
 
+        // ── Chunk 31L-1: no avanzar a produccion sin fuentes en el ODF ──
+        // Hard gate backend que reemplaza el soft gate (confirm frontend) previo.
+        // Condicion mas basica que BORRADOR_IP_REQUIRED y TRASPASO_REQUIRED: si
+        // el expediente esta vacio, ni siquiera tiene sentido generar borrador IP
+        // ni hacer traspaso. Por eso se evalua primero en la transicion.
+        if (nextStatus === 'produccion') {
+          const mergedDataForFuentes = ((updates.data ?? project.data) ?? {}) as Record<string, unknown>;
+          const fuentes = Array.isArray(mergedDataForFuentes.fuentes)
+            ? (mergedDataForFuentes.fuentes as unknown[])
+            : [];
+          if (fuentes.length === 0) {
+            return NextResponse.json(
+              {
+                error: 'Necesitas al menos una fuente en el expediente (ODF) para avanzar a Produccion.',
+                code: 'FUENTES_REQUIRED',
+              },
+              { status: 400 }
+            );
+          }
+        }
+
         // ── Chunk 18C: no avanzar a produccion sin borrador IP ──
         if (nextStatus === 'produccion') {
           const mergedDataForIP = ((updates.data ?? project.data) ?? {}) as Record<string, unknown>;
