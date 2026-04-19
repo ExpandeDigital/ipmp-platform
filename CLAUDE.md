@@ -3513,3 +3513,318 @@ sub-chunk de extraccion a helper canonico en
 `src/lib/pipeline/phases.ts`. No se ejecuta ahora para evitar
 ampliar alcance del 31M-DT9, pero se documenta para consideracion en
 Chunk 32 de higiene arquitectonica transversal.
+
+### Chunk 31I-3 — Parser de vuelta del exportador de enunciado [COMPLETADO 19 abril 2026]
+
+El Chunk 31I-3 cierra el loop del exportador de enunciado del Chunk
+31I: implementa el parser que lee la version corregida externamente
+del enunciado (producida por un motor externo a partir del `.docx`
+generado por el 31I-1) y la persiste como evento en un buffer nuevo
+`data.gate_1a.correcciones[]`, analogo en forma a
+`data.gate_1a.exportaciones[]` del 31I-1 pero en direccion opuesta.
+Acepta `.md` y `.docx` como formatos de entrada, usa `mammoth.convertToHtml`
++ `node-html-parser` para el docx y parsing linea-a-linea para el md,
+ancla el matching de supuestos contra el ID interno que el exportador
+ya embebia en cada bloque. Tolerancia alta: secciones ausentes generan
+warnings, no errores. El chunk deja el Chunk 31I en estado CERRADO
+(31I-1 codigo + 31I-2 codigo + 31I-3 codigo + 31I-4 este documental).
+
+El chunk se ejecuto en dos sub-chunks (uno de diagnostico sin
+commit + uno de codigo + este documental):
+
+- **31I-3 Fase 0** [DIAGNOSTICO, sin commit] Reconocimiento solo-lectura
+  del exportador actual. Confirmo que el 31I-1 persiste eventos con
+  patron Drizzle object-merge (leer proyecto, mutar el objeto
+  `data.gate_1a.exportaciones` en memoria, UPDATE con el objeto
+  completo) y NO con `jsonb_set` SQL como podria asumirse. Este hallazgo
+  evito una desviacion en la ejecucion de 31I-3. Tambien identifico
+  el ancla mas fuerte para el parser de vuelta: el paragraph
+  `ID interno: <uuid>` al final de cada bloque de supuesto en el
+  export, que sobrevive transformacion a HTML y a markdown por igual.
+
+- **31I-3 Codigo** `bb46733` feat(chunk31i-3): parser de vuelta del
+  exportador de enunciado (md y docx). Cinco archivos, +1066/-2
+  lineas. Dos archivos nuevos:
+
+  - `src/lib/pipeline/parse-gate1a-correccion.ts` (+487 lineas).
+    Funcion pura `parseGate1aCorreccion(input: ParseInput)` con dos
+    helpers internos: `parseFromMarkdown()` linea-a-linea y
+    `parseFromDocx()` que usa `mammoth.convertToHtml` + `node-html-parser`.
+    El parser de docx re-serializa el HTML a pseudo-markdown antes
+    de llamar al parser de md, lo que evita duplicar la logica de
+    extraccion de secciones (eleccion DRY, con costo de un nivel
+    intermedio de transformacion que debera considerarse si en el
+    futuro aparecen reportes de parseo falso desde docx reales).
+    Shape del output `Gate1aCorreccionParsed` con
+    `enunciadoCorregido: { titulo, tesis }`, `supuestos: Array<{
+    id, veredictoFinal, textoCorregido, justificacion, fuentes }>`,
+    `fuentesGlobales`, `notaEditorial` y `warnings`. Matching
+    contra `supuestosIdsDelExport`: los que estan en ambos lados se
+    incluyen; los del parser no presentes en el export se descartan
+    con warning; los del export ausentes en el parser se marcan con
+    `veredictoFinal: 'no_resuelto'` con warning. Throw
+    `EMPTY_CORRECCION` solo si simultaneamente no hay supuestos
+    resueltos, no hay enunciado corregido y no hay nota editorial;
+    throw `PARSE_FAILED` con detalle si mammoth falla.
+
+  - `src/app/api/projects/[id]/import-gate1a-correccion/route.ts`
+    (+306 lineas). Endpoint `POST` que acepta `multipart/form-data`
+    con campo `file`. Validaciones en orden con codes estables para
+    mapeo UX: `PROJECT_NOT_FOUND` (404), `NO_EXPORT_PRIOR` (400),
+    `PHASE_LOCKED` (400, restringe a fases `draft`/`validacion`/`hito_1`),
+    `NO_FILE` (400), `INVALID_FORMAT` (400, con fallback para `.md`
+    reportado como `text/plain` y `.docx` con MIME vacio por algunos
+    browsers), `FILE_TOO_LARGE` (400, 2MB). Persistencia via patron
+    object-merge del 31I-1 para simetria: leer proyecto, push al array
+    `data.gate_1a.correcciones`, UPDATE con el objeto `data` completo.
+    Extrae `supuestosIdsDelExport` del `ultimoResultado.supuestos[]`
+    filtrado a veredicto `dudoso`/`falso`, misma filtracion que uso el
+    exportador. Responde 200 con `{ success, correccion, warnings }`.
+
+  Tres archivos modificados:
+
+  - `src/app/projects/[id]/ProjectDetailClient.tsx` (+141 netas).
+    Tipos `Gate1aCorreccionEvent`, `Gate1aCorreccionSupuesto` y
+    `Gate1aCorreccionVeredictoFinal` definidos junto a
+    `Gate1aExportacionEvent` preexistente (simetria con el 31I-1).
+    Campo opcional `correcciones?: Gate1aCorreccionEvent[]` agregado
+    a `Gate1aData` (linea 306). Estado `importandoGate1a` + ref
+    `importGate1aInputRef` en la shape del componente. Handler
+    `handleImportarGate1aCorreccion(file)` con construccion de
+    FormData, fetch al endpoint, mapeo exhaustivo de codes de error
+    a toasts informativos, toast de success con resumen dinamico
+    (N supuestos resueltos, estado del enunciado, conteo de
+    warnings) y `fetchProject()` como refetch para sincronizar
+    estado. Boton `emerald-600` "Importar correccion externa" e
+    input file oculto con `accept=".md,.docx,..."` insertados en el
+    panel del tab `gate_1a` junto al boton de export del 31I-2.
+    Condicion de render `(gate1a?.exportaciones?.length ?? 0) > 0`:
+    el boton solo aparece si hay al menos una exportacion previa,
+    preservando el invariante "no se importa correccion sin haber
+    exportado primero" que tambien valida el backend.
+
+  - `package.json` + `package-lock.json`. Nueva dependencia
+    `node-html-parser@7.1.0` (40KB, MIT, cero dependencias
+    transitivas). Elegida sobre cheerio (mas pesada) y linkedom
+    (overkill para el caso de uso).
+
+- **31I-4** [DOCUMENTAL] Este bloque.
+
+#### Decisiones arquitectonicas tomadas por el arquitecto pre-ejecucion
+
+Las siguientes decisiones quedaron congeladas antes de mandar el
+prompt al ejecutor, para evitar que el chunk explotara en alcance
+por indecision:
+
+**Formato aceptado: ambos `.md` y `.docx`**. El export del 31I-1
+ya declara en su seccion 5 que el motor externo puede devolver
+ambos. Restringir ahora a uno solo violaria el contrato firmado
+con el motor externo.
+
+**Aterrizaje de la correccion: buffer en `data.gate_1a.correcciones[]`,
+NO sobreescritura directa de `title`/`thesis`**. Razones
+multiples: (a) preserva trazabilidad (el operador puede revisar
+que se parseo antes de comprometer); (b) alinea con la hibridacion
+40/60 del pipeline (la plataforma produce el andamio, la validacion
+humana decide cuando aplicar); (c) un parser que sobreescribe
+directo puede corromper el enunciado si el motor externo devolvio
+algo raro; (d) el auto-reset atomico del Gate 1a del 31C-2 sigue
+disponible para cuando el operador decida aplicar (via un PATCH
+futuro de `title`/`thesis` que disparara el reset automaticamente).
+
+**Estrategia de parseo docx: `mammoth.convertToHtml` +
+`node-html-parser`**. Descartadas: (a) `mammoth.extractRawText` +
+heuristica por regex de lineas (fragil ante variaciones de
+formato); (b) cheerio (mas pesada sin justificar el peso para el
+caso de uso); (c) aceptar solo `.md` (violaria el contrato del
+exportador).
+
+**Fases que permiten import: `draft`, `validacion`, `hito_1`**.
+En fases posteriores (pesquisa en adelante) el enunciado esta
+congelado por el hard gate `ENUNCIADO_INMUTABLE` del Chunk 31B,
+por lo que no tiene sentido aceptar correcciones externas.
+
+**Alcance del chunk: parser + persistencia sola**. UI de
+visualizacion del buffer y boton "Aplicar correccion" quedan
+explicitamente fuera de alcance. Se registran como candidato
+futuro Chunk 31J para mantener separacion limpia de
+responsabilidades: 31I es "exportacion e importacion mecanica del
+enunciado", 31J seria "workflow de aprobacion de correcciones
+externas". Son preocupaciones distintas y mezclarlas sacrificaria
+la claridad del flujo, uno de los seis criterios.
+
+#### Reconciliacion Drizzle vs `jsonb_set` — precedente metodologico
+
+Durante la ejecucion el prompt del arquitecto contenia una
+contradiccion interna: pedia usar `jsonb_set` SQL literal para la
+persistencia del evento, pero tambien instruia "revisar codigo del
+31I-1 para replicar el patron exacto del exportaciones[]". La Fase
+0 de diagnostico habia confirmado que el 31I-1 usa patron Drizzle
+object-merge (leer, mutar en memoria, UPDATE con objeto completo)
+y no `jsonb_set`. El ejecutor resolvio la contradiccion siguiendo
+la instruccion secundaria que coincidia con el codigo real,
+reporto la desviacion por adelantado y no la escalo como ABORT.
+
+Este comportamiento es exactamente el esperado de la clausula de
+detencion por ajuste de alcance formalizada desde Chunk 12B: el
+codigo real del repo manda sobre asunciones del arquitecto,
+siempre y cuando la desviacion sea de implementacion (patron
+tecnico) y no de alcance (que archivos se tocan o que funcionalidad
+se agrega). El ejecutor interpreto correctamente la distincion.
+
+Incorporacion al metodo del arquitecto: en prompts futuros que
+involucren persistencia sobre estructuras `jsonb`, preferir
+instruccion del tipo "replica el patron de persistencia del
+commit `<sha>` del sub-chunk `<id>`" sin especificar el mecanismo
+SQL/Drizzle concreto, y dejar al ejecutor decidir en base al
+codigo real del precedente. Esto evita contradicciones internas
+en el prompt.
+
+#### Gate de lint removido — deuda tecnica registrada como candidato
+
+La Tarea 5 del prompt incluia `npm run lint` como verificacion
+pre-commit. El ejecutor reporto que `next lint` fue removido en
+Next 16 y el script del `package.json` quedo obsoleto, y que el
+repo no tiene `eslint.config.js` propio, por lo que no hay gate
+automatico de lint actualmente. `npx tsc --noEmit` es el unico
+gate automatico disponible y paso sin errores.
+
+Esta situacion es deuda tecnica latente fuera del alcance del
+31I-3. Se registra como candidato futuro Chunk 32-higiene-A:
+restaurar ESLint flat config en el repo, con reglas basicas
+`@typescript-eslint/recommended`. No urgente pero tampoco
+despreciable a mediano plazo: quedarse sin gate de lint
+automatico degrada silenciosamente la consistencia estilistica y
+permite bugs sutiles tipo `no-unused-vars`, `no-floating-promises`
+o `prefer-const` que el tsc no captura. Se recomienda abordarlo
+como parte del Chunk 32 de higiene arquitectonica transversal,
+junto con el candidato preexistente de extraer el derivador
+IP/MP triplicado a `src/lib/pipeline/phases.ts` (documentado en
+DT-9) y el candidato emergente de este chunk de estandarizar
+insumos del arquitecto en un directorio `.gitignore`-ado para no
+contaminar el root del repo.
+
+#### Validacion empirica del fix 31I-3
+
+Validacion visual end-to-end con archivo real producido por un
+motor externo queda pendiente de ejecucion por el operador. El
+flujo a validar sera: (a) exportar `.docx` desde un proyecto en
+fase `draft`/`validacion` con supuestos dudosos; (b) pasarlo por
+un motor externo (ej. Claude.ai, ChatGPT) con el contrato de
+retorno dictado en la seccion 5 del export; (c) descargar
+`.md` o `.docx` corregido; (d) click en "Importar correccion
+externa" en el tab Gate 1a; (e) verificar toast de success con
+resumen de lo parseado; (f) inspeccionar la columna `data` del
+proyecto en BD para confirmar que el evento esta en
+`data.gate_1a.correcciones[0]` con shape esperada.
+
+Pre-commit pasaron: `npx tsc --noEmit` sin errores, `git status`
+reporto cinco archivos esperados (2 nuevos + 3 modificados), `git
+diff --stat` coherente con las estimaciones de lineas, commit
+`bb46733` aplicado y pusheado a `origin/main` sin conflictos. El
+preambulo defensivo DT-17 abortio correctamente ningun worktree
+stale esta vez (la secuencia Capa 1 env var + Capa 2 checkbox
+desmarcado esta funcionando), y `git worktree list` post-chunk
+mostro una sola entrada limpia en `main`.
+
+#### Shape persistida en `data.gate_1a.correcciones[]` (contrato para 31J futuro)
+
+Cada evento tiene esta shape estable que el Chunk 31J consumira
+para la UI de revision y aplicacion:
+
+```
+{
+  id: string,                 // uuid generado en servidor
+  importadoEn: string,        // ISO timestamp
+  formatoOrigen: 'md' | 'docx',
+  nombreArchivo: string,
+  enunciadoCorregido: {
+    titulo: string | null,
+    tesis: string | null
+  },
+  supuestos: [{
+    id: string,               // matcheado al ID interno del export
+    veredictoFinal: 'confirmado' | 'corregido' | 'descartado' | 'no_resuelto',
+    textoCorregido: string | null,
+    justificacion: string | null,
+    fuentes: string[]
+  }],
+  fuentesGlobales: string[],
+  notaEditorial: string | null,
+  aplicado: false,            // flag reservado para 31J
+  aplicadoEn: null,           // timestamp reservado para 31J
+  warnings: string[]
+}
+```
+
+Los campos `aplicado: false` y `aplicadoEn: null` estan reservados
+para el Chunk 31J: cuando el operador ejecute "Aplicar correccion"
+sobre un evento especifico, el endpoint de aplicacion debera
+setearlos a `true` y `<ISO timestamp>` respectivamente, y hacer
+PATCH atomico de `title`/`thesis` del proyecto, lo que disparara
+el auto-reset del Gate 1a del 31C-2 por la via normal.
+
+#### Actualizacion del plan de sub-chunks del Chunk 31
+
+Post-31I-3 + 31I-4, la tabla actualizada es:
+
+| Sub-chunk | Nombre | Tipo | Estado |
+|-----------|--------|------|--------|
+| 31A | Eliminacion seccion Herramientas de Produccion del dashboard | Codigo | CERRADO (`e631a2c`). |
+| 31B | Mapa canonico del pipeline IP y diagnostico arquitectonico | Documental | CERRADO. |
+| 31C | Gate 1a: sanity check de supuestos factuales | Codigo | CERRADO. |
+| 31D | Hito 1: validacion de hipotesis elegida | Codigo | CERRADO. |
+| 31I | Exportador e importador de enunciado | Codigo + Doc | CERRADO. 31I-1 (`e219e0b`), 31I-2 (`51236ce`), 31I-3 (`bb46733`), 31I-4 (este bloque). |
+| 31L | Hard gate `FUENTES_REQUIRED` + retiro soft gate frontend | Codigo | CERRADO. |
+| 31M-DT10 | Inyeccion fecha actual en prompt Gate 1a | Codigo | CERRADO. |
+| 31M-DT9 | Agregar `'hito_1'` al derivador de fase IP frontend | Codigo + Doc | CERRADO. |
+| 31M-DT11 | Confirm previo al regenerar hipotesis con eleccion persistida | Codigo | Candidato. |
+| 31M-DT15 | Auditoria aritmetica de diferencias temporales en Gate 1a y Borrador IP | Codigo | Candidato. |
+| 31M-DT16 | Inyeccion de fuentes ODF al contexto del Validador IP | Codigo | Candidato. Prioridad media-alta. |
+| 31M-DT17 | Worktrees stale de Claude Code en Claude Desktop | Arquitectonico | DOCUMENTADO. Metodologia de tres capas defensivas incorporada al ritual. |
+| 31N | Soft warning triangulacion `fuentes.length < 3` | Codigo | Candidato. |
+| 31E | Verificaciones criticas como sistema real | Codigo | Pendiente. |
+| 31F | Separacion forense/editorial en prompts | Codigo | Pendiente. |
+| 31G | Importador de borrador IP externo | Codigo | Candidato, no compromiso. |
+| 31H | Cierre documental del Chunk 31 entero | Documental | Todos los anteriores. |
+
+#### Candidatos futuros emergentes de este chunk
+
+**Chunk 31J — UI de revision y aplicacion de correcciones externas**.
+Alcance: tab o panel nuevo en `ProjectDetailClient.tsx` que listo
+los eventos de `data.gate_1a.correcciones[]` con render de cada
+uno (supuestos resueltos, enunciado propuesto, fuentes, nota
+editorial, warnings), boton "Aplicar correccion" que ejecute PATCH
+de `title`/`thesis` (disparando auto-reset del Gate 1a por el
+31C-2) y marque el evento como `aplicado: true`. Puede incluir
+tambien opcion "Descartar evento" para limpieza. Dependencia
+funcional: el 31I-3 debe estar en produccion con al menos un
+evento de correccion importado para que el UI tenga algo que
+mostrar en validacion empirica. No es bloqueante para el
+funcionamiento del Chunk 31I cerrado.
+
+**Chunk 32-higiene-A — Restaurar gate de lint**. Alcance:
+configurar ESLint flat config (`eslint.config.js`) en el root del
+repo con `@typescript-eslint/recommended` + reglas minimas
+(`no-unused-vars`, `prefer-const`, `no-floating-promises`),
+agregar script `lint` al `package.json`, correr en el repo
+completo y resolver los warnings/errors que emerjan como
+sub-chunks separados. Prioridad media: no urgente pero a mediano
+plazo es inversion de calidad estructural.
+
+**Chunk 32-higiene-B — Extraer derivador IP/MP a helper canonico**.
+Candidato preexistente documentado en DT-9. Tres arrays identicos
+(`IP_PHASES` en `route.ts`, `IP_PHASES` en `ProjectDetailClient.tsx`,
+`INVESTIGAPRESS_STATUSES` en `ProjectsClient.tsx`) deberian
+consolidarse en `src/lib/pipeline/phases.ts` para eliminar el
+riesgo de desincronizacion futuro tipo DT-9.
+
+**Chunk 32-higiene-C — Directorio `.gitignore`-ado para insumos
+documentales del arquitecto**. Candidato nuevo. Los bloques tipo
+`CLAUDE_UPDATE_CHUNK_*.md` que el arquitecto copia al root del repo
+para que el ejecutor los apenda al `CLAUDE.md` quedan en el root
+sin ser tracked, lo que genera riesgo de que un futuro prompt con
+`git add .` indiscriminado los commitee accidentalmente.
+Recomendacion: crear `/c/ipmp-platform/.arquitecto/insumos/` y
+agregarlo a `.gitignore`, y ajustar el ritual de entrega al `cp`
+hacia ese directorio.
