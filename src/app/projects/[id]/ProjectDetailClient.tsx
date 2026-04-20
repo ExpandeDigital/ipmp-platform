@@ -1084,6 +1084,8 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
   const importGate1aInputRef = useRef<HTMLInputElement | null>(null);
   // Chunk 31J-2: estado del handler de aplicar correcciones
   const [aplicandoCorreccionId, setAplicandoCorreccionId] = useState<string | null>(null);
+  // Chunk 31J-3: estado del handler de descartar correcciones
+  const [descartandoCorreccionId, setDescartandoCorreccionId] = useState<string | null>(null);
   const [gate1aEditTitle, setGate1aEditTitle] = useState('');
   const [gate1aEditThesis, setGate1aEditThesis] = useState('');
   const [gate1aGuardandoEnunciado, setGate1aGuardandoEnunciado] = useState(false);
@@ -1728,6 +1730,55 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
       alert('Error de red aplicando la corrección. Revisa tu conexión y reintentalo.');
     } finally {
       setAplicandoCorreccionId(null);
+    }
+  }
+
+  // ── Chunk 31J-3: descartar corrección externa ──
+  // Consume POST /api/projects/[id]/discard-gate1a-correccion. Marca el
+  // evento como descartado con timestamp sin tocar title/thesis ni el
+  // Gate 1a. El descarte es irreversible y mutuamente excluyente con
+  // apply.
+  async function handleDescartarGate1aCorreccion(correccionId: string) {
+    if (descartandoCorreccionId !== null) return;
+    if (!project) return;
+
+    const ok = confirm(
+      '¿Descartar esta corrección? Se marcará como descartada y dejará de aparecer como pendiente. El evento queda registrado en el historial para trazabilidad, pero no se podrá aplicar después.',
+    );
+    if (!ok) return;
+
+    setDescartandoCorreccionId(correccionId);
+    try {
+      const res = await fetch(
+        `/api/projects/${project.id}/discard-gate1a-correccion`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ correccionId }),
+        },
+      );
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        const code = (json as { code?: string }).code ?? '';
+        const errorText = (json as { error?: string }).error ?? `Error ${res.status}`;
+        const mensajes: Record<string, string> = {
+          CORRECCION_YA_APLICADA: 'Esta corrección ya fue aplicada y no puede ser descartada.',
+          CORRECCION_YA_DESCARTADA: 'Esta corrección ya fue descartada.',
+          CORRECCION_NOT_FOUND: 'Corrección no encontrada.',
+          PROJECT_NOT_FOUND: 'Proyecto no encontrado.',
+        };
+        const mensaje = mensajes[code] ?? errorText;
+        alert(`No se pudo descartar la corrección: ${mensaje}`);
+        return;
+      }
+
+      await fetchProject();
+    } catch (error) {
+      console.error('[handleDescartarGate1aCorreccion] error inesperado:', error);
+      alert('Error de red descartando la corrección. Revisa tu conexión y reintentalo.');
+    } finally {
+      setDescartandoCorreccionId(null);
     }
   }
 
@@ -4268,7 +4319,7 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                         <div className="bg-white border border-gray-200 rounded p-4 space-y-4">
                           <h3 className="font-semibold text-lg">Correcciones externas importadas</h3>
                           <p className="text-sm text-gray-600">
-                            Eventos recibidos del motor externo. Revisá el contenido de cada corrección. Los controles para aplicarla o descartarla llegan en las próximas actualizaciones de este tab.
+                            Eventos recibidos del motor externo. Revisá el contenido de cada corrección y aplicala o descartala según corresponda. Aplicar actualiza el título/tesis del proyecto y resetea el Gate 1a a pendiente. Descartar marca el evento como procesado sin modificar el proyecto.
                           </p>
                           {/* Chunk 31J-1: render descriptivo. Botones de Aplicar (31J-2) y Descartar (31J-3) llegan en sub-chunks siguientes. */}
                           {[...(gate1a?.correcciones ?? [])]
@@ -4391,20 +4442,27 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                                   )}
 
                                   {!evento.aplicado && !evento.descartado && (
-                                    <button
-                                      type="button"
-                                      onClick={() => void handleAplicarGate1aCorreccion(evento.id)}
-                                      disabled={aplicandoCorreccionId !== null}
-                                      title="Aplica esta corrección al enunciado del proyecto y resetea el Gate 1a a pendiente"
-                                      className="bg-emerald-600 text-white px-4 py-2 rounded hover:bg-emerald-700 disabled:bg-gray-400 text-sm"
-                                    >
-                                      {aplicandoCorreccionId === evento.id ? 'Aplicando...' : 'Aplicar corrección'}
-                                    </button>
+                                    <div className="flex gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => void handleAplicarGate1aCorreccion(evento.id)}
+                                        disabled={aplicandoCorreccionId !== null || descartandoCorreccionId !== null}
+                                        title="Aplica esta corrección al enunciado del proyecto y resetea el Gate 1a a pendiente"
+                                        className="bg-emerald-600 text-white px-4 py-2 rounded hover:bg-emerald-700 disabled:bg-gray-400 text-sm"
+                                      >
+                                        {aplicandoCorreccionId === evento.id ? 'Aplicando...' : 'Aplicar corrección'}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => void handleDescartarGate1aCorreccion(evento.id)}
+                                        disabled={aplicandoCorreccionId !== null || descartandoCorreccionId !== null}
+                                        title="Descarta esta corrección sin aplicarla. El evento queda en el historial para trazabilidad."
+                                        className="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700 disabled:bg-gray-400 text-sm"
+                                      >
+                                        {descartandoCorreccionId === evento.id ? 'Descartando...' : 'Descartar corrección'}
+                                      </button>
+                                    </div>
                                   )}
-
-                                  <div className="text-xs text-gray-500 italic border-t border-gray-200 pt-2 mt-2">
-                                    El botón para Descartar esta corrección se activa en el sub-chunk 31J-3.
-                                  </div>
                                 </div>
                               );
                             })}
