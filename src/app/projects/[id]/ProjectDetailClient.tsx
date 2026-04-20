@@ -337,6 +337,9 @@ interface Gate1aCorreccionEvent {
   notaEditorial: string | null;
   aplicado: boolean;
   aplicadoEn: string | null;
+  // Chunk 31J: flags de estado de aplicación o descarte
+  descartado?: boolean;
+  descartadoEn?: string | null;
   warnings: string[];
 }
 
@@ -4206,6 +4209,142 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                               </button>
                             </>
                           )}
+                        </div>
+                      )}
+
+                      {/* Chunk 31J-1: seccion de revision de correcciones externas importadas */}
+                      {(gate1a?.correcciones?.length ?? 0) > 0 && (
+                        <div className="bg-white border border-gray-200 rounded p-4 space-y-4">
+                          <h3 className="font-semibold text-lg">Correcciones externas importadas</h3>
+                          <p className="text-sm text-gray-600">
+                            Eventos recibidos del motor externo. Revisá el contenido de cada corrección. Los controles para aplicarla o descartarla llegan en las próximas actualizaciones de este tab.
+                          </p>
+                          {/* Chunk 31J-1: render descriptivo. Botones de Aplicar (31J-2) y Descartar (31J-3) llegan en sub-chunks siguientes. */}
+                          {[...(gate1a?.correcciones ?? [])]
+                            .sort((a, b) => b.importadoEn.localeCompare(a.importadoEn))
+                            .map((evento) => {
+                              const estadoBadge = evento.aplicado === true
+                                ? { texto: 'Aplicado', clases: 'bg-emerald-100 text-emerald-800 border border-emerald-300' }
+                                : evento.descartado === true
+                                  ? { texto: 'Descartado', clases: 'bg-gray-100 text-gray-700 border border-gray-300' }
+                                  : { texto: 'Pendiente', clases: 'bg-amber-100 text-amber-800 border border-amber-300' };
+                              return (
+                                <div key={evento.id} className="border border-gray-300 rounded p-4 space-y-3">
+                                  <div className="flex flex-wrap gap-2 items-center">
+                                    <span className={`${estadoBadge.clases} px-2 py-0.5 rounded text-xs font-medium`}>
+                                      {estadoBadge.texto}
+                                    </span>
+                                    <span className="font-mono text-sm">{evento.nombreArchivo}</span>
+                                    <span className="text-sm text-gray-600">
+                                      {new Date(evento.importadoEn).toLocaleString('es-CL')}
+                                    </span>
+                                    <span className="bg-gray-100 text-gray-700 px-2 py-0.5 rounded text-xs">
+                                      {evento.formatoOrigen.toUpperCase()}
+                                    </span>
+                                  </div>
+
+                                  <div className="space-y-1">
+                                    <h4 className="font-medium text-sm">Enunciado propuesto</h4>
+                                    <div className="text-sm">
+                                      <span className="text-gray-600">Título: </span>
+                                      {evento.enunciadoCorregido.titulo !== null ? (
+                                        <span className="font-medium">{evento.enunciadoCorregido.titulo}</span>
+                                      ) : (
+                                        <span className="italic text-gray-500">(sin cambios)</span>
+                                      )}
+                                    </div>
+                                    <div className="text-sm">
+                                      <span className="text-gray-600">Tesis: </span>
+                                      {evento.enunciadoCorregido.tesis !== null ? (
+                                        <span className="font-medium">{evento.enunciadoCorregido.tesis}</span>
+                                      ) : (
+                                        <span className="italic text-gray-500">(sin cambios)</span>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <details>
+                                    <summary className="cursor-pointer font-medium text-sm">
+                                      Supuestos evaluados ({evento.supuestos.length})
+                                    </summary>
+                                    <ul className="space-y-2 mt-2">
+                                      {evento.supuestos.map((supuesto) => {
+                                        const veredictoClases = supuesto.veredictoFinal === 'confirmado'
+                                          ? 'bg-green-100 text-green-800 border border-green-300'
+                                          : supuesto.veredictoFinal === 'corregido'
+                                            ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                                            : supuesto.veredictoFinal === 'descartado'
+                                              ? 'bg-gray-100 text-gray-700 border border-gray-300'
+                                              : 'bg-red-100 text-red-800 border border-red-300';
+                                        return (
+                                          <li key={supuesto.id} className="space-y-1">
+                                            <div className="flex flex-wrap gap-2 items-center">
+                                              <span className="font-mono text-xs">{supuesto.id}</span>
+                                              <span className={`${veredictoClases} px-2 py-0.5 rounded text-xs font-medium`}>
+                                                {supuesto.veredictoFinal}
+                                              </span>
+                                            </div>
+                                            {supuesto.textoCorregido && (
+                                              <p className="text-sm">
+                                                <span className="text-gray-600">Texto corregido: </span>
+                                                {supuesto.textoCorregido}
+                                              </p>
+                                            )}
+                                            {supuesto.justificacion && (
+                                              <blockquote className="border-l-2 border-gray-300 pl-3 text-sm text-gray-700">
+                                                {supuesto.justificacion}
+                                              </blockquote>
+                                            )}
+                                            {supuesto.fuentes.length > 0 && (
+                                              <ul className="list-disc pl-5 text-sm text-gray-700">
+                                                {supuesto.fuentes.map((fuente, idx) => (
+                                                  <li key={idx}>{fuente}</li>
+                                                ))}
+                                              </ul>
+                                            )}
+                                          </li>
+                                        );
+                                      })}
+                                    </ul>
+                                  </details>
+
+                                  {evento.fuentesGlobales.length > 0 && (
+                                    <div className="space-y-1">
+                                      <h4 className="font-medium text-sm">Fuentes globales</h4>
+                                      <ul className="list-disc pl-5 text-sm text-gray-700">
+                                        {evento.fuentesGlobales.map((fuente, idx) => (
+                                          <li key={idx}>{fuente}</li>
+                                        ))}
+                                      </ul>
+                                    </div>
+                                  )}
+
+                                  {evento.notaEditorial && evento.notaEditorial.length > 0 && (
+                                    <div className="space-y-1">
+                                      <h4 className="font-medium text-sm">Nota editorial</h4>
+                                      <blockquote className="border-l-2 border-gray-300 pl-3 text-sm text-gray-700 italic">
+                                        {evento.notaEditorial}
+                                      </blockquote>
+                                    </div>
+                                  )}
+
+                                  {evento.warnings.length > 0 && (
+                                    <div className="space-y-1">
+                                      <h4 className="font-medium text-sm text-amber-800">Warnings del parser</h4>
+                                      <ul className="list-disc pl-5 text-sm text-amber-700">
+                                        {evento.warnings.map((warning, idx) => (
+                                          <li key={idx}>{warning}</li>
+                                        ))}
+                                      </ul>
+                                    </div>
+                                  )}
+
+                                  <div className="text-xs text-gray-500 italic border-t border-gray-200 pt-2 mt-2">
+                                    Los botones para Aplicar o Descartar esta corrección se activan en los sub-chunks 31J-2 y 31J-3.
+                                  </div>
+                                </div>
+                              );
+                            })}
                         </div>
                       )}
 
