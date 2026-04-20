@@ -48,6 +48,9 @@ interface Gate1aCorreccionEvent {
   notaEditorial: string | null;
   aplicado: boolean;
   aplicadoEn: string | null;
+  // Chunk 31J: flags de estado de aplicación o descarte
+  descartado?: boolean;
+  descartadoEn?: string | null;
   warnings: string[];
 }
 

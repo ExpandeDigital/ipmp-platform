@@ -1082,6 +1082,8 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
   // Chunk 31I-3: estado del importador de correcciones del Gate 1a
   const [importandoGate1a, setImportandoGate1a] = useState(false);
   const importGate1aInputRef = useRef<HTMLInputElement | null>(null);
+  // Chunk 31J-2: estado del handler de aplicar correcciones
+  const [aplicandoCorreccionId, setAplicandoCorreccionId] = useState<string | null>(null);
   const [gate1aEditTitle, setGate1aEditTitle] = useState('');
   const [gate1aEditThesis, setGate1aEditThesis] = useState('');
   const [gate1aGuardandoEnunciado, setGate1aGuardandoEnunciado] = useState(false);
@@ -1677,6 +1679,55 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
       if (importGate1aInputRef.current) {
         importGate1aInputRef.current.value = '';
       }
+    }
+  }
+
+  // ── Chunk 31J-2: aplicar corrección externa ──
+  // Consume POST /api/projects/[id]/apply-gate1a-correccion. Actualiza
+  // title/thesis con el enunciado propuesto (si los incluye), marca el
+  // evento como aplicado y dispara el auto-reset del Gate 1a por el
+  // patrón del 31C-2 replicado inline en el endpoint.
+  async function handleAplicarGate1aCorreccion(correccionId: string) {
+    if (aplicandoCorreccionId !== null) return;
+    if (!project) return;
+
+    const ok = confirm(
+      '¿Aplicar esta corrección? Se actualizarán título/tesis con los valores propuestos (si los incluye) y el Gate 1a quedará pendiente de re-ejecutar.',
+    );
+    if (!ok) return;
+
+    setAplicandoCorreccionId(correccionId);
+    try {
+      const res = await fetch(
+        `/api/projects/${project.id}/apply-gate1a-correccion`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ correccionId }),
+        },
+      );
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        const code = (json as { code?: string }).code ?? '';
+        const errorText = (json as { error?: string }).error ?? `Error ${res.status}`;
+        const mensajes: Record<string, string> = {
+          CORRECCION_YA_APLICADA: 'Esta corrección ya fue aplicada.',
+          CORRECCION_DESCARTADA: 'Esta corrección fue descartada.',
+          CORRECCION_NOT_FOUND: 'Corrección no encontrada.',
+          PROJECT_NOT_FOUND: 'Proyecto no encontrado.',
+        };
+        const mensaje = mensajes[code] ?? errorText;
+        alert(`No se pudo aplicar la corrección: ${mensaje}`);
+        return;
+      }
+
+      await fetchProject();
+    } catch (error) {
+      console.error('[handleAplicarGate1aCorreccion] error inesperado:', error);
+      alert('Error de red aplicando la corrección. Revisa tu conexión y reintentalo.');
+    } finally {
+      setAplicandoCorreccionId(null);
     }
   }
 
@@ -4339,8 +4390,20 @@ Notas adicionales: ${lead.notas || '(sin notas)'}`;
                                     </div>
                                   )}
 
+                                  {!evento.aplicado && !evento.descartado && (
+                                    <button
+                                      type="button"
+                                      onClick={() => void handleAplicarGate1aCorreccion(evento.id)}
+                                      disabled={aplicandoCorreccionId !== null}
+                                      title="Aplica esta corrección al enunciado del proyecto y resetea el Gate 1a a pendiente"
+                                      className="bg-emerald-600 text-white px-4 py-2 rounded hover:bg-emerald-700 disabled:bg-gray-400 text-sm"
+                                    >
+                                      {aplicandoCorreccionId === evento.id ? 'Aplicando...' : 'Aplicar corrección'}
+                                    </button>
+                                  )}
+
                                   <div className="text-xs text-gray-500 italic border-t border-gray-200 pt-2 mt-2">
-                                    Los botones para Aplicar o Descartar esta corrección se activan en los sub-chunks 31J-2 y 31J-3.
+                                    El botón para Descartar esta corrección se activa en el sub-chunk 31J-3.
                                   </div>
                                 </div>
                               );
