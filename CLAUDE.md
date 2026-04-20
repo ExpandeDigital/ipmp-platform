@@ -3828,3 +3828,69 @@ sin ser tracked, lo que genera riesgo de que un futuro prompt con
 Recomendacion: crear `/c/ipmp-platform/.arquitecto/insumos/` y
 agregarlo a `.gitignore`, y ajustar el ritual de entrega al `cp`
 hacia ese directorio.
+
+### Chunk 31M-DT16-a — Inyeccion de metadata de fuentes del ODF al Validador IP [COMPLETADO 20 abril 2026]
+
+El Chunk 31M-DT16-a cierra una brecha arquitectonica identificada en el caso ARICA 100: el system prompt del Validador IP pedia cross-reference con el ODF pero el handler del frontend no inyectaba las fuentes al userMessage. El resultado empirico era un falso negativo donde el modelo reportaba "fuentes no documentadas en el expediente" cuando el ODF real contenia fuentes verificadas. Este sub-chunk inyecta metadata de las fuentes del ODF al userMessage del Validador IP, replicando el patron canonico establecido por handleGenerateBorradorIP.
+
+Commit: 08ffa66 feat(chunk31m-dt16-a): inyeccion de metadata de fuentes del ODF al Validador IP
+Superficie: 2 archivos modificados, +27/-2 lineas, cero archivos nuevos.
+
+Archivos tocados:
+- src/app/projects/[id]/ProjectDetailClient.tsx (+24/-1): handler handleValidarBorradorIP ahora construye userMessage compuesto con bloque "FUENTES DOCUMENTADAS (ODF)" seguido de separador y bloque "BORRADOR IP A VALIDAR:". Formato identico al precedente del Generador (7 campos por fuente: tipo, nombre_titulo, rol_origen, estado, confianza, notas opcional, url opcional). Fallback literal "FUENTES DOCUMENTADAS (ODF): ninguna registrada en el expediente." cuando data.fuentes es vacio o undefined.
+- src/lib/ai/prompts.ts (+3/-1): buildValidadorTonoBorradorIPPrompt actualizado con parrafo nuevo CONTEXTO DE ENTRADA que declara las dos secciones del userMessage y como usarlas; dimension 3 (Calidad de fuentes citadas) refinada para referenciar explicitamente FUENTES DOCUMENTADAS del userMessage en lugar de asumir visibilidad implicita del ODF.
+
+#### Decisiones arquitectonicas pre-ejecucion
+
+Alcance: solo inyeccion de metadata. No se inyecta contenido extraido de archivos adjuntos en este sub-chunk para preservar separacion limpia entre "cerrar el gap de visibilidad de metadata" y "habilitar auditoria de fidelidad textual contra archivos primarios". El segundo caso queda como sub-chunk 31M-DT16-b separado.
+
+No se toca el endpoint backend /api/ai/generate. El endpoint es agnostico al contenido del userMessage; inyectar fuentes en el cliente no requiere cambios server-side. Esta eleccion preserva la capa de dispatch generico por tool establecida desde el Chunk 6.
+
+No se agrega campo fuentes al body del request. El body sigue con shape { tool, userMessage, projectId }. Inyectar las fuentes dentro del userMessage preserva el contrato existente.
+
+Patron de serializacion: replica literal del precedente handleGenerateBorradorIP (linea ~2259). Ningun formato nuevo inventado. Ningun JSON estructurado. Ningun markdown. Texto plano linea-a-linea con indentacion por espacios, consistente con otros userMessages del pipeline.
+
+#### Validacion empirica del fix
+
+Ejecutada en produccion 20 abril 2026 con proyecto METRICPRESS-RP-2026-0001 (caso ARICA 100 en nueva iteracion bajo gobierno Kast).
+
+Precondiciones del proyecto de prueba: fase pesquisa, hipotesis elegida aprobada en hito_1, 4 fuentes registradas en ODF con estado verificada (T13, Minsegpres, G5 Noticias, Radio Estacion), borrador IP disponible en modo diagnostico con contenido ~5000 caracteres.
+
+Output del Validador IP post-fix: score 4.2/5, veredicto "Apto para traspaso", 4 dimensiones evaluadas con subscores entre 4.0 y 4.5, 2 recomendaciones metodologicas.
+
+Indicadores de exito observados:
+- El modelo nombra las 4 fuentes del ODF por identificador especifico (T13, Minsegpres, G5 Noticias, Radio Estacion) en la dimension 3, no habla de fuentes en abstracto.
+- El resumen ejecutivo declara "coherencia entre fuentes documentadas y contenido", evaluacion relacional imposible pre-fix.
+- El output es arquitectonicamente diferente al comportamiento pre-fix: el modelo referencia explicitamente FUENTES DOCUMENTADAS como seccion del userMessage, prueba empirica de que el fix esta produciendo efecto real.
+
+Indicador de falla latente observado:
+- El modelo afirma "las citas textuales son precisas y estan correctamente atribuidas" sin poder verificar precision textual desde solo metadata de fuentes. Esta afirmacion es extrapolacion no justificada por la evidencia disponible al modelo, lo que constituye falso positivo latente. El sub-chunk 31M-DT16-b (contenido extraido al Validador IP) resolveria este gap dando al modelo acceso al contenido primario de los archivos adjuntos.
+
+Veredicto de validacion: fix del 31M-DT16-a confirmado operativo. Resuelve el falso negativo original del caso ARICA 100 (fuentes no detectadas). Expone un nuevo riesgo simetrico de falso positivo sobre fidelidad textual que queda pendiente de resolver en el sub-chunk b.
+
+#### Decision arquitectonica sobre sub-chunk 31M-DT16-b
+
+El sub-chunk b (inyeccion de contenido extraido de archivos adjuntos al Validador IP) queda justificado pero diferido al orden natural del roadmap. Razones:
+
+1. Contrato asimetrico Generador/Validador: hoy el Generador ve contenido de archivos adjuntos y el Validador no, contrato asimetrico que la filosofia de trabajo del operador prohibe. El sub-chunk b es la resolucion estructural correcta.
+
+2. Frame 40/60 de la plataforma IPMP: la validacion empirica mostro que el Validador IP cumple su rol pre-traspaso con metadata sola. La verificacion de fidelidad textual profunda es trabajo de la Sala de Redaccion externa (6 agentes), no del Validador IP interno. El sub-chunk b reduce pero no elimina ese trabajo externo.
+
+3. Prioridades de roadmap: existen candidatos de mayor impacto operativo pendientes (31E verificaciones criticas sistema real, 31J UI revision correcciones externas, 31M-DT11 confirm regeneracion). Ejecutar el b antes de estos quebraria el criterio de priorizacion por impacto.
+
+El sub-chunk b queda registrado como candidato futuro, no compromiso inmediato. Se activa cuando un caso empirico exponga el falso positivo sobre fidelidad textual o cuando el orden natural del roadmap lo traiga.
+
+#### Candidatos futuros emergentes
+
+Chunk 32-higiene-D — Renombrar validador_tono_ip → validador_ip en stack completo. Registrado post-reconocimiento del 31M-DT16. Disonancia nominal: tool backend se llama validador_tono_ip (heredado del validador de tono MP), conceptualmente audita 4 dimensiones sin brand alignment, frontend ActiveTool usa validador_ip. Tres nombres para la misma cosa, aumenta carga cognitiva. Chunk puramente nominal, sin cambio funcional, impacto en ~4 archivos minimo.
+
+Chunk 32-higiene-E — Extraer pipeline de ingesta del ODF a helper canonico en src/lib/pipeline/. Consolidar la logica de serializacion de project.data.fuentes[] al userMessage (metadata + contenido extraido cuando aplique) en helper compartido consumido por handleGenerateBorradorIP, handleValidarBorradorIP, y futuros handlers con ODF. Prevenir triplicacion silenciosa, misma logica que 32-higiene-B (derivador IP/MP).
+
+#### Actualizacion del plan de sub-chunks del Chunk 31
+
+| Sub-chunk | Nombre | Tipo | Estado |
+|-----------|--------|------|--------|
+| 31M-DT16-a | Inyeccion metadata fuentes ODF al Validador IP | Codigo | CERRADO (08ffa66), validacion empirica positiva. |
+| 31M-DT16-b-doc | Cierre documental del 31M-DT16-a | Documental | Este bloque. |
+| 31M-DT16-b | Inyeccion contenido extraido ODF al Validador IP | Codigo | DIFERIDO al orden natural del roadmap. |
+
