@@ -2388,12 +2388,35 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
     setIpValidadorError(null);
 
     try {
+      // Chunk 31M-DT16-a: inyectar metadata de fuentes del ODF al userMessage
+      // para que el Validador IP pueda hacer cross-reference real contra el
+      // expediente. Patron replicado del precedente canonico de
+      // handleGenerateBorradorIP (lineas ~2259-2275).
+      const fuentes = (project.data?.fuentes as Array<Record<string, unknown>>) ?? [];
+      let userMessage = '';
+      if (fuentes.length > 0) {
+        userMessage += `FUENTES DOCUMENTADAS (ODF):\n`;
+        fuentes.forEach((f, idx) => {
+          userMessage += `${idx + 1}. Tipo: ${f.tipo ?? '[sin tipo]'}\n`;
+          userMessage += `   Nombre/titulo: ${f.nombre_titulo ?? '[sin nombre]'}\n`;
+          userMessage += `   Rol/origen: ${f.rol_origen ?? '[sin rol]'}\n`;
+          userMessage += `   Estado: ${f.estado ?? 'por_contactar'}\n`;
+          userMessage += `   Confianza: ${f.confianza ?? 'media'}\n`;
+          if (f.notas) userMessage += `   Notas: ${f.notas}\n`;
+          if (f.url) userMessage += `   URL: ${f.url}\n`;
+          userMessage += `\n`;
+        });
+      } else {
+        userMessage += `FUENTES DOCUMENTADAS (ODF): ninguna registrada en el expediente.\n\n`;
+      }
+      userMessage += `BORRADOR IP A VALIDAR:\n${ipValidadorTexto.trim()}`;
+
       const res = await fetch('/api/ai/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           tool: 'validador_tono_ip',
-          userMessage: ipValidadorTexto.trim(),
+          userMessage,
           projectId: project.id,
         }),
       });
