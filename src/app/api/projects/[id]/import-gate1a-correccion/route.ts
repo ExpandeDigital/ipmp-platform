@@ -75,19 +75,25 @@ function resolveMimeType(
   reportedMime: string,
   filename: string,
 ): 'md' | 'docx' | null {
-  const lowerMime = reportedMime.toLowerCase();
   const lowerName = filename.toLowerCase();
 
+  // Criterio principal: extension del archivo. El MIME reportado por el
+  // browser es poco confiable para .md (varia entre text/markdown,
+  // text/x-markdown, text/plain, application/octet-stream o vacio segun
+  // OS y browser: Windows reporta application/octet-stream por default
+  // al no tener markdown registrado). La extension es estable y controlada
+  // por el operador. La validacion real del contenido ocurre downstream
+  // en parseGate1aCorreccion, que lanza PARSE_FAILED si el contenido no
+  // es markdown ni docx valido.
+  if (lowerName.endsWith('.md')) return 'md';
+  if (lowerName.endsWith('.docx')) return 'docx';
+
+  // Fallback defensivo: si el nombre no tiene extension reconocible pero
+  // el MIME si es explicito, respetar el MIME. Cubre el caso raro de
+  // archivos sin extension subidos programaticamente.
+  const lowerMime = reportedMime.toLowerCase();
   if (lowerMime === DOCX_MIME) return 'docx';
   if (lowerMime === MD_MIME) return 'md';
-
-  // Fallback: algunos browsers reportan .md como text/plain o vacio.
-  if (lowerName.endsWith('.md') && (lowerMime === 'text/plain' || lowerMime === '')) {
-    return 'md';
-  }
-  if (lowerName.endsWith('.docx') && lowerMime === '') {
-    return 'docx';
-  }
 
   return null;
 }
