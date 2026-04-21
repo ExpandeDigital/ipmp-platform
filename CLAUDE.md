@@ -3996,3 +3996,60 @@ Hotfix 31J-2.5 consolidado transitivamente: el fix permitio que los archivos .md
 | 31J-3 | Endpoint discard + handler + boton Descartar | Codigo | CERRADO (d1febfe), validacion empirica positiva. |
 | 31J-4 | Cierre documental | Documental | Este bloque. |
 
+
+---
+
+## Cierre tecnico MVP — 21 abril 2026
+
+### Declaracion
+
+IPMP Platform alcanza estado MVP tecnico en HEAD `4d61fe8`. El pipeline canonico IP→MP esta cerrado, validado empiricamente sobre multiples casos (ARICA 100 archivado como exhibit en METRICPRESS-RP-2026-0001, IP-2026-0006 como exhibit del Chunk 31J), con gates duros funcionando y el loop de correcciones externas cerrado end-to-end.
+
+El operador declara cierre tecnico el 21 abril 2026, tras una semana de overshoot sobre la proyeccion original. La plataforma pasa de fase de construccion a fase de operacion. El criterio de reapertura de chunks tecnicos queda explicitamente restringido a las condiciones listadas abajo.
+
+### Backlog post-MVP consolidado
+
+Todo el trabajo pendiente de los Chunks 30/31/32 queda archivado como backlog sin compromiso de ejecucion, agrupado por tipo:
+
+**Bugs menores UX (no bloqueantes):**
+- 32-higiene-I: fetchProject() post-export Gate 1a (requiere F5 manual actualmente).
+- 32-higiene-J: MIME literal en toast de error INVALID_FORMAT.
+- 32-higiene-K: copy del toast post-apply correccion ("aplicada" en lugar de "importada").
+- DT-23: UI del tab Gate 1a solo se renderiza en draft mientras el backend acepta draft+validacion+hito_1.
+- DT-27: endpoint import deriva supuestosIds solo de ultimoResultado.supuestos (diferido a caso empirico).
+
+**Refactors arquitectonicos (riesgo bajo, drift prevenible):**
+- 32-higiene-F: extraer tipo Gate1aCorreccionEvent a helper canonico.
+- 32-higiene-G: consolidar auto-reset Gate 1a en src/lib/pipeline/gate1a-reset.ts y eliminar la triplicacion del PATCH.
+- 32-higiene-H: reforzar instruccion anti-resumen-en-prosa en prompts ejecutivos.
+- DT-9 original: extraer derivador IP/MP triplicado a src/lib/pipeline/phases.ts.
+
+**Features nuevos (requieren caso de uso editorial concreto que los justifique):**
+- 31E: verificaciones criticas como sistema real.
+- 31F: separacion forense/editorial en prompts.
+- 31G: importador de borrador IP externo.
+- 31M-DT11: confirm previo a regenerar hipotesis con eleccion persistida.
+- 31M-DT15: auditoria aritmetica de diferencias temporales.
+- 31M-DT16-b: inyeccion contenido extraido ODF al Validador IP.
+- 31N: soft warning triangulacion fuentes.length < 3.
+
+**Deuda tecnica preexistente diferida:**
+- 30C: DROP de tablas muertas assets y revisions.
+- 30D: auditoria del campo legacy borrador?.
+- DT-5: tabla users muerta a nivel TypeScript con FK viva projects.createdBy.
+
+### Criterio de reapertura
+
+Ningun chunk tecnico se retoma por razones esteticas o de completitud arquitectonica. Se retoma exclusivamente si:
+
+1. Un bug operacional bloquea la produccion de un caso real en operacion.
+2. Una necesidad editorial concreta de MetricPress (cliente pagador o caso propio de alta visibilidad) lo justifica con ROI claro.
+3. Un requisito de compliance o seguridad emerge y no admite workaround.
+
+Cualquier otra razon de reapertura queda explicitamente fuera de alcance hasta nuevo aviso del operador.
+
+### Proximo frente
+
+Operacion: produccion de casos reales bajo MetricPress Growth PR (B2B regional) y el diario online en construccion. La plataforma pasa a ser herramienta de trabajo, no objeto de trabajo. El rol del arquitecto se reduce a soporte reactivo bajo los criterios de reapertura arriba.
+
+— Cristian Jofre Donoso, 21 abril 2026
