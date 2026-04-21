@@ -3894,3 +3894,105 @@ Chunk 32-higiene-E — Extraer pipeline de ingesta del ODF a helper canonico en 
 | 31M-DT16-b-doc | Cierre documental del 31M-DT16-a | Documental | Este bloque. |
 | 31M-DT16-b | Inyeccion contenido extraido ODF al Validador IP | Codigo | DIFERIDO al orden natural del roadmap. |
 
+### Chunk 31J — UI de revision y aplicacion de correcciones externas [COMPLETADO 20 abril 2026]
+
+El Chunk 31J cierra el loop funcional del Chunk 31I-3 habilitando la superficie UI para revisar, aplicar y descartar correcciones externas del enunciado importadas via boton "Importar correccion externa". Se ejecuto en cinco sub-chunks: 31J-0 diagnostico solo-lectura, 31J-1 seccion UI descriptiva (render sin botones), 31J-2 endpoint apply-gate1a-correccion + boton Aplicar, 31J-3 endpoint discard-gate1a-correccion + boton Descartar, 31J-2.5 hotfix emergente del 31I-3 sobre resolveMimeType, y 31J-4 este documental. Validacion empirica end-to-end ejecutada el 20 abril 2026 sobre proyecto test IP-2026-0006 (UUID 8c09eba9-4518-41fc-97fc-c40de73f6708) con exito sobre flujo completo: import de dos archivos .md sinteticos, apply del primero con actualizacion de title/thesis y auto-reset del Gate 1a, re-import del segundo, descarte del tercer evento, persistencia tras F5.
+
+#### Commits del Chunk 31J
+
+- **31J-0** [DIAGNOSTICO, sin commit] Reconocimiento solo-lectura de superficie: tipo Gate1aCorreccionEvent duplicado en ProjectDetailClient.tsx y import-gate1a-correccion/route.ts con comentario "Debe mantenerse en sync"; endpoint unico del 31I-3 que escribe a data.gate_1a.correcciones[] con patron object-merge; auto-reset del 31C-2 en PATCH de route.ts L571-604 que archiva ultimoResultado y resetea estado sin preservar exportaciones ni correcciones via spread explicito; toolchain limitado a npx tsc --noEmit + npm run build porque next lint fue removido de Next 16.
+
+- **31J-1** `665bbad` feat(chunk31j-1): seccion UI de revision de correcciones (render descriptivo). +139 lineas en src/app/projects/[id]/ProjectDetailClient.tsx. Extension del interface Gate1aCorreccionEvent con campos opcionales descartado?: boolean y descartadoEn?: string | null. Seccion nueva dentro del tab Gate 1a que renderiza data.gate_1a.correcciones[] ordenadas por importadoEn descendente con card por evento que incluye header de metadata, badge de estado (Aplicado/Descartado/Pendiente), seccion Enunciado propuesto, supuestos evaluados en details collapsible con badges por veredicto, fuentes globales, nota editorial, warnings del parser, footer hint transitorio. Decision arquitectonica: render descriptivo sin botones de accion para evitar contratos asimetricos temporales.
+
+- **31J-2** `221a70d` feat(chunk31j-2): endpoint apply-gate1a-correccion + handler + boton Aplicar. 3 archivos, +294/-1. Nuevo endpoint POST /api/projects/[id]/apply-gate1a-correccion (227 lineas) que valida fase (draft/validacion/hito_1), ubica el evento por correccionId, guard contra aplicado/descartado, detecta enunciadoCambio, construye UPDATE atomico unico que setea title/thesis con valores propuestos, replica inline el auto-reset del 31C-2 preservando explicitamente exportaciones y correcciones via spread, marca el evento con aplicado: true. Frontend: state aplicandoCorreccionId, handler con confirm + mapeo de codes + fetchProject on success, boton emerald con condicional !aplicado && !descartado.
+
+- **31J-3** `d1febfe` feat(chunk31j-3): endpoint discard-gate1a-correccion + handler + boton Descartar. 2 archivos, +278/-14. Nuevo endpoint POST /api/projects/[id]/discard-gate1a-correccion (206 lineas) que replica 1:1 la estructura del apply pero sin tocar title/thesis ni Gate 1a, solo marca el evento con descartado: true. Codes simetricos (CORRECCION_YA_APLICADA, CORRECCION_YA_DESCARTADA, mutuamente excluyentes). Botones Aplicar + Descartar envueltos en flex gap-2 con disabled compuesto. Footer hint transitorio del 31J-1 eliminado. Subtitulo operacional estable.
+
+- **31J-2.5** `ddfb2b4` fix(chunk31j-2.5): resolveMimeType prioriza extension sobre MIME reportado. 1 archivo, +15/-9. Hotfix emergente durante validacion empirica por rechazo de archivos .md subidos desde Chrome en Windows (MIME application/octet-stream no contemplado). Refactor extension-first en resolveMimeType: chequea extension primero (.md o .docx), MIME queda como fallback defensivo solo para archivos sin extension. La validacion real del contenido ocurre downstream en parseGate1aCorreccion.
+
+- **31J-4** [DOCUMENTAL] Este bloque.
+
+#### Decisiones arquitectonicas del Chunk 31J
+
+**D1 — Endpoints dedicados por operacion, no extension del PATCH.** Apply y discard viven en endpoints propios. El PATCH ya estaba saturado (793 lineas, 3 actions, 2 auto-resets). Simetria con el precedente del 31I-3.
+
+**D2 — Apply y discard mutuamente excluyentes.** Una correccion ya aplicada no puede descartarse; una descartada no puede aplicarse.
+
+**D3 — Auto-reset del 31C-2 replicado inline en apply endpoint con spread explicito.** El endpoint apply no reusa el auto-reset del PATCH (L571-604 dropea keys); lo replica inline preservando explicitamente exportaciones y correcciones. Validacion empirica refuto DT-21.
+
+**D4 — Ubicacion UI: una sola tab Gate 1a con multiples secciones.** La seccion "Correcciones externas importadas" vive dentro del tab Gate 1a debajo del panel de botones export/import.
+
+**D5 — Render descriptivo primero, botones acoplados a su handler.** El 31J-1 rindio cards completas sin botones. Botones Aplicar y Descartar aparecen en 31J-2 y 31J-3 acoplados a sus handlers y endpoints.
+
+**D6 — Shape del evento extendida retrocompatiblemente.** Los campos descartado y descartadoEn son opcionales. Eventos viejos sin esos campos se interpretan como no descartados.
+
+#### Validacion empirica — 20 abril 2026
+
+Proyecto test IP-2026-0006 (UUID 8c09eba9-4518-41fc-97fc-c40de73f6708) con enunciado problematico ("Implementación del Plan Estratégico Municipal 2027 en Putre..."). Gate 1a genero veredicto requiere_correccion con 5 supuestos (1 dudoso, 4 falsos por inconsistencia temporal detectada por la inyeccion de fecha actual del 31M-DT10). Exporter genero .docx con IDs s1-s5.
+
+Validacion sobre dos archivos .md sinteticos generados por el arquitecto respetando el contrato del parser: archivo-1 con enunciado corregido + 5 supuestos con veredictos mixtos, archivo-2 con enunciado null + 5 supuestos descartado.
+
+Resultados:
+- Import archivo 1: exito, 5 supuestos resueltos.
+- Import archivo 2: exito, 0 supuestos resueltos + 7 warnings (esperados por DT-27).
+- Render del 31J-1: 2 cards pendiente correctamente renderizadas.
+- Apply archivo 1: title/thesis actualizados, Gate 1a reseteado a pendiente, badge Aplicado emerald.
+- Apply archivo 2: marcado como aplicado sin disparar segundo auto-reset.
+- F5: persistencia confirmada.
+- Re-import archivo 2: tercera card pendiente con botones Aplicar + Descartar visibles.
+- Descarte tercera card: badge Descartado gray, title/thesis intactos, Gate 1a intacto.
+- F5 final: 3 cards estables (2 Aplicado + 1 Descartado).
+
+Hotfix 31J-2.5 consolidado transitivamente: el fix permitio que los archivos .md con MIME application/octet-stream de Chrome en Windows fueran aceptados.
+
+#### Deudas tecnicas emergentes (DT-18 a DT-29)
+
+**DT-18** — Hallucination del ejecutor Claude Code durante 31J-1: reporto "system reminder sobre malware analysis" prohibiendo modificar archivo en repo propio. Mitigacion: bloque "Nota de contexto" en prompts subsecuentes.
+
+**DT-19** — Recordatorio metodologico: regla 19 del perfil v4 exige delimitadores literales en outputs criticos.
+
+**DT-20** — Linea de corte del protocolo v4: chunks 31J inclusive en adelante bajo protocolo v4 completo. Chunks anteriores bajo protocolos previos, no se reaplica retroactivamente. Decision operador 20 abril 2026.
+
+**DT-21** — Refutado empiricamente. El endpoint apply del 31J-2 preserva exportaciones y correcciones via spread explicito. Deuda subyacente del auto-reset del 31C-2 en PATCH de route.ts L571-604 permanece como 32-higiene-G.
+
+**DT-22** — Incumplimiento sistematico de regla 19 por el ejecutor: resumenes en prosa dentro de delimitadores, agregado de analisis de seguridad no solicitados. Mitigacion: enfasis explicito "sin analisis, sin comentario".
+
+**DT-23** — Asimetria backend/frontend: endpoints aceptan draft + validacion + hito_1, UI del tab Gate 1a solo se renderiza en draft.
+
+**DT-24** — Bug UX preexistente del 31I-2: handler handleExportarGate1a no refresca state post-export, requiere F5 manual para que boton Importar aparezca. Candidato 32-higiene-I.
+
+**DT-25** — Bug preexistente del 31I-3 cachado en validacion empirica: resolveMimeType rechazaba .md con MIME application/octet-stream. Resuelto en 31J-2.5. Refuerza argumento DT-20.
+
+**DT-26** — Bug menor UX de handleImportarGate1aCorreccion: toast no incluye MIME literal que backend si devuelve. Candidato 32-higiene-J.
+
+**DT-27** — Comportamiento arquitectonico: endpoint import deriva supuestosIdsDelExport de ultimoResultado.supuestos[]. Si apply anterior reseteo ultimoResultado, import nuevo descarta todos sus supuestos. Decision diferida.
+
+**DT-28** — Bug menor UX de handleAplicarGate1aCorreccion: toast post-apply usa copy "Correccion importada" en lugar de "aplicada". Candidato 32-higiene-K.
+
+**DT-29** — Confusion del arquitecto humano al pegar prompts cuando secuencia del chat es larga y dos prompts tienen estructura similar: durante ejecucion del 31J-4 el operador pego por error el prompt del 31J-1 ya cerrado. El ejecutor actuo correctamente con HALT y pidio evidencia. Demuestra que la clausula de detencion del Chunk 12B tambien protege contra errores del arquitecto.
+
+#### Candidatos 32-higiene emergentes del Chunk 31J
+
+- **32-higiene-F** — Extraer tipo Gate1aCorreccionEvent a helper canonico. Duplicado en ProjectDetailClient.tsx L326 y import-gate1a-correccion/route.ts L37.
+
+- **32-higiene-G** — Auto-reset del 31C-2 en PATCH no preserva exportaciones/correcciones. Consolidar en helper canonico src/lib/pipeline/gate1a-reset.ts consumido por PATCH y apply-gate1a-correccion.
+
+- **32-higiene-H** — Incluir en prompts ejecutivos instruccion explicita contra resumen en prosa dentro de delimitadores literales y contra analisis de seguridad no solicitados.
+
+- **32-higiene-I** — Agregar fetchProject() a handleExportarGate1a.
+
+- **32-higiene-J** — Mapear MIME literal del error backend en toast cuando code INVALID_FORMAT.
+
+- **32-higiene-K** — Ajustar copy del toast de handleAplicarGate1aCorreccion.
+
+#### Actualizacion del plan de sub-chunks del Chunk 31
+
+| Sub-chunk | Nombre | Tipo | Estado |
+|-----------|--------|------|--------|
+| 31J-0 | Diagnostico solo-lectura | Diagnostico | CERRADO sin commit. |
+| 31J-1 | Seccion UI descriptiva de correcciones | Codigo | CERRADO (665bbad). |
+| 31J-2 | Endpoint apply + handler + boton Aplicar | Codigo | CERRADO (221a70d), validacion empirica positiva. |
+| 31J-2.5 | Hotfix resolveMimeType extension-first | Codigo | CERRADO (ddfb2b4). |
+| 31J-3 | Endpoint discard + handler + boton Descartar | Codigo | CERRADO (d1febfe), validacion empirica positiva. |
+| 31J-4 | Cierre documental | Documental | Este bloque. |
+
